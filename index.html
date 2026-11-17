@@ -102,6 +102,7 @@ button{cursor:pointer}
 .touches button:active{transform:scale(.95);background:var(--ligne)}
 .touches .moins{color:var(--alerte)}
 .touches .plus{color:var(--ok)}
+.lecture .touches,.lecture .histo button,.lecture .carte>.bouton{display:none}
 .section-titre{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px}
 .histo{display:grid;gap:6px;margin:0;padding:0;list-style:none}
 .histo li{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface);border-radius:10px;font-size:.95rem}
@@ -116,7 +117,17 @@ button{cursor:pointer}
 .couleurs{display:flex;flex-wrap:wrap;gap:8px}
 .couleurs button{width:30px;height:30px;border-radius:50%;border:2px solid transparent;background:var(--c);padding:0}
 .couleurs button[aria-pressed="true"]{border-color:var(--texte);box-shadow:0 0 0 2px var(--fond) inset}
+.hex-zone{display:inline-flex;gap:8px;align-items:center}
+.nuancier{width:34px;height:34px;padding:0;border:1px solid var(--ligne);border-radius:50%;background:none;cursor:pointer;overflow:hidden}
+.nuancier::-webkit-color-swatch-wrapper{padding:0}.nuancier::-webkit-color-swatch{border:0;border-radius:50%}
+.champ.hex{width:7.5em;padding:.45em .6em;font-variant-numeric:tabular-nums;text-transform:uppercase}
+.champ.hex.actif{border-color:var(--texte)}
 .confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.95rem}
+.sauvegardes{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.sauvegarde{display:grid;gap:4px;padding:10px;background:var(--fond);border:1px solid var(--ligne);border-radius:10px}
+.sauvegarde-haut{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sauvegarde-haut .bouton{padding:.4em .8em;font-size:.9rem;flex:0 0 auto}
+.sauvegarde .resume{overflow-wrap:anywhere}
 .note{color:var(--doux);font-size:.9rem;margin:0}
 .lien{word-break:break-all;font-size:.85rem;color:var(--doux);background:var(--fond);padding:8px;border-radius:8px;border:1px solid var(--ligne);user-select:all}
 
@@ -140,6 +151,16 @@ button{cursor:pointer}
    Laisse vide pour la saisir dans la page d'accueil.
    ============================================================ */
 const BASE_FIREBASE = "https://scoring-concours-de-bravoure-default-rtdb.europe-west1.firebasedatabase.app/";
+/* CLÉ API WEB du projet Firebase (Paramètres du projet → Général → « Clé API Web »).
+   Elle sert à la connexion des personnes autorisées à modifier les scores.
+   Ce n'est pas un secret : la protection vient des règles de la base. */
+const CLE_API_FIREBASE = "";
+/* ADRESSE DU COMPTE ARBITRE créé dans Firebase Authentication (voir LISEZMOI.md).
+   Quand elle est renseignée, la télécommande ne demande que le mot de passe arbitre. */
+const EMAIL_ARBITRE = "";
+/* ADRESSE DU COMPTE ADMIN (second compte Firebase Authentication).
+   Son mot de passe est demandé à chaque remise à zéro des scores. */
+const EMAIL_ADMIN = "";
 
 /* Les scores vivent dans la base, sous /salles/<code>. Les ajouts de points
    sont des incréments atomiques côté serveur : plusieurs téléphones peuvent
@@ -184,7 +205,16 @@ function toast(msg) {
   clearTimeout(toastMinuteur); toastMinuteur = setTimeout(() => t.hidden = true, 3500);
 }
 const estId = v => typeof v === "string" && /^[a-z0-9]{1,16}$/.test(v);
-const estCouleur = v => Number.isInteger(v) && v >= 0 && v < PALETTE.length;
+// Couleur d'équipe : indice de la palette (0 à 9) ou code HEX « #RRGGBB »
+const estHex = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
+const estCouleur = v => (Number.isInteger(v) && v >= 0 && v < PALETTE.length) || estHex(v);
+const couleur = co => estHex(co) ? co : PALETTE[co] || PALETTE[9];
+const nomCouleur = co => estHex(co) ? co.toUpperCase() : NOMS_COULEURS[co] || "";
+function lireHex(v) {
+  let s = String(v || "").trim().replace(/^#?/, "#");
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) s = "#" + [...s.slice(1)].map(c => c + c).join("");
+  return estHex(s) ? s.toLowerCase() : null;
+}
 const texte = (v, max) => typeof v === "string" ? v.trim().slice(0, max) : "";
 
 /* ---------- Adresse de la base ---------- */
@@ -200,13 +230,64 @@ function baseValide(b) {
 const BASE_FIXE = baseValide(BASE_FIREBASE);
 const BASE = BASE_FIXE || baseValide(params.get("base")) || baseValide(stock("base"));
 if (BASE && !BASE_FIXE) stock("base", BASE);
+const cleValide = c => /^[A-Za-z0-9_-]{20,60}$/.test(String(c || "")) ? String(c) : null;
+const CLE_FIXE = cleValide(CLE_API_FIREBASE);
+const CLE = CLE_FIXE || cleValide(params.get("cle")) || cleValide(stock("cle"));
+if (CLE && !CLE_FIXE) stock("cle", CLE);
 function urlVue(code, vue) {
   const u = new URL(location.href);
   u.search = ""; u.hash = "";
   u.searchParams.set("salle", joliCode(code));
   u.searchParams.set("vue", vue);
   if (!BASE_FIXE && BASE) u.searchParams.set("base", BASE);
+  if (!CLE_FIXE && CLE) u.searchParams.set("cle", CLE);
   return u.toString();
+}
+
+/* ---------- Connexion des personnes autorisées (Firebase Authentication, e-mail + mot de passe) ---------- */
+const testLocal = () => location.hostname === "localhost" && String(BASE).startsWith("http://localhost");
+const urlAuth = quoi => testLocal() ? `${BASE}/__auth/${quoi}`
+  : quoi === "connexion" ? `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(CLE)}`
+  : `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(CLE)}`;
+const cleSession = () => "session:" + BASE;
+const session = () => stock(cleSession());
+function deconnecter() { try { localStorage.removeItem(cleSession()); } catch {} }
+async function authentifier(email, motDePasse) {
+  if (!CLE && !testLocal()) throw new Error("CLE_MANQUANTE");
+  let r;
+  try {
+    r = await fetch(urlAuth("connexion"), { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: motDePasse, returnSecureToken: true }) });
+  } catch { throw new Error("RESEAU"); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error?.message || "ERREUR");
+  return j;
+}
+async function connecter(email, motDePasse) {
+  const j = await authentifier(email, motDePasse);
+  stock(cleSession(), { uid: j.localId, email: j.email, jeton: j.idToken, renouv: j.refreshToken, exp: Date.now() + Number(j.expiresIn || 3600) * 1000 });
+}
+async function jeton() {
+  const s = session();
+  if (!s) return null;
+  if (s.exp - 120000 > Date.now()) return s.jeton;
+  try {
+    const r = await fetch(urlAuth("jeton"), { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(s.renouv) });
+    if (!r.ok) { if (r.status === 400) deconnecter(); return null; }
+    const j = await r.json();
+    stock(cleSession(), { ...s, jeton: j.id_token, renouv: j.refresh_token, exp: Date.now() + Number(j.expires_in || 3600) * 1000 });
+    return j.id_token;
+  } catch { return s.jeton; }
+}
+function messageConnexion(code) {
+  if (/INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|EMAIL_NOT_FOUND|INVALID_EMAIL|MISSING_PASSWORD/.test(code)) return EMAIL_ARBITRE.trim() ? "Mot de passe incorrect." : "E-mail ou mot de passe incorrect.";
+  if (/TOO_MANY_ATTEMPTS/.test(code)) return "Trop d'essais : réessaie dans quelques minutes.";
+  if (/OPERATION_NOT_ALLOWED|PASSWORD_LOGIN_DISABLED/.test(code)) return "Connexion par e-mail non activée dans Firebase (Authentication → Méthode de connexion).";
+  if (/API key|API_KEY|CLE_MANQUANTE/i.test(code)) return "Clé API Firebase absente ou incorrecte (voir LISEZMOI).";
+  if (code === "RESEAU") return "Pas de réseau : vérifie la connexion du téléphone.";
+  if (/USER_DISABLED/.test(code)) return "Ce compte est désactivé dans Firebase.";
+  return "Connexion impossible (" + code + ").";
 }
 const pageHebergee = () => location.protocol === "https:" || location.protocol === "http:";
 
@@ -222,8 +303,40 @@ function lireEtat(a) {
     .filter(([k, h]) => estId(k) && h && estId(h.e) && Number.isFinite(h.d))
     .map(([k, h]) => ({ c: k, e: h.e, d: h.d, ts: Number(h.ts) || 0, x: h.x ? 1 : 0 }))
     .sort((x, y) => (x.c < y.c ? 1 : -1));
-  return { titre: texte(a.titre, 60) || "Classement", equipes, hist, ecran: Number(a.ecran) || 0 };
+  const sauvegardes = Object.entries(a.sauvegardes && typeof a.sauvegardes === "object" ? a.sauvegardes : {})
+    .filter(([k, s]) => estId(k) && s && s.equipes && typeof s.equipes === "object")
+    .map(([k, s]) => ({
+      k, ts: Number(s.ts) || 0, raison: RAISONS[s.raison] ? s.raison : "auto", titre: texte(s.titre, 60) || "Classement",
+      equipes: Object.entries(s.equipes)
+        .filter(([id, q]) => estId(id) && q && texte(q.nom, 32) && Number.isFinite(q.score))
+        .map(([id, q]) => ({ id, nom: texte(q.nom, 32), co: estCouleur(q.co) ? q.co : 9, score: q.score, ordre: Number(q.ordre) || 0 }))
+        .sort((x, y) => x.ordre - y.ordre || (x.id < y.id ? -1 : 1))
+    }))
+    .sort((x, y) => (x.k < y.k ? 1 : -1));
+  return { titre: texte(a.titre, 60) || "Classement", equipes, hist, ecran: Number(a.ecran) || 0, sauvegardes };
 }
+
+/* ---------- Sauvegardes : copies des scores gardées dans la base, sous /sauvegardes ---------- */
+const RAISONS = { auto: "Automatique", manuelle: "Manuelle", remise: "Avant remise à zéro", suppression: "Avant suppression d'équipe", restauration: "Avant restauration" };
+const GARDER_AUTO = 20, GARDER_AUTRES = 10, INTERVALLE_AUTO = 5 * 60000;
+const empreinte = equipes => JSON.stringify(equipes.map(x => [x.id, x.nom, x.co, x.score]));
+// Entrées à ajouter à une écriture : la nouvelle sauvegarde + le ménage des plus anciennes
+function entreesSauvegarde(etat, raison) {
+  if (!etat.equipes.length) return {};
+  const equipes = {};
+  for (const x of etat.equipes) equipes[x.id] = { nom: x.nom, co: x.co, score: x.score, ordre: x.ordre };
+  const maj = { ["sauvegardes/" + cleTemps()]: { ts: Date.now(), raison, titre: etat.titre, equipes } };
+  const autos = etat.sauvegardes.filter(s => s.raison === "auto"), autres = etat.sauvegardes.filter(s => s.raison !== "auto");
+  for (const s of autos.slice(raison === "auto" ? GARDER_AUTO - 1 : GARDER_AUTO)) maj["sauvegardes/" + s.k] = null;
+  for (const s of autres.slice(raison === "auto" ? GARDER_AUTRES : GARDER_AUTRES - 1)) maj["sauvegardes/" + s.k] = null;
+  return maj;
+}
+function resumeSauvegarde(s) {
+  const tri = [...s.equipes].sort((a, b) => b.score - a.score);
+  const debut = tri.slice(0, 3).map(x => `${x.nom} ${x.score}`).join(" · ");
+  return tri.length > 3 ? `${debut} · +${tri.length - 3} équipe${tri.length - 3 > 1 ? "s" : ""}` : debut;
+}
+const dateSauvegarde = ts => new Date(ts).toLocaleString("fr-FR", { weekday: "short", hour: "2-digit", minute: "2-digit" });
 function classer(equipes) {
   const tri = [...equipes].sort((a, b) => b.score - a.score || a.nom.localeCompare(b.nom, "fr"));
   let rang = 0, prec = null;
@@ -267,10 +380,11 @@ function creerSalle(code, surChange, surConnexion) {
     try { const r = await fetch(racine + ".json"); if (r.ok) { arbre = await r.json(); notifier(false); } } catch {}
   }
   // maj : écriture multi-chemins envoyée à Firebase ; optimiste : valeurs affichées tout de suite
-  async function modifier(maj, optimiste) {
+  async function modifier(maj, optimiste, jetonPonctuel) {
     if (optimiste) { for (const [k, v] of Object.entries(optimiste)) poser(k, v); notifier(false); }
     let r;
-    try { r = await fetch(racine + ".json", { method: "PATCH", body: JSON.stringify(maj) }); }
+    const t = jetonPonctuel || await jeton();
+    try { r = await fetch(racine + ".json" + (t ? "?auth=" + encodeURIComponent(t) : ""), { method: "PATCH", body: JSON.stringify(maj) }); }
     catch { recharger(); throw Object.assign(new Error("réseau"), { status: 0 }); }
     if (!r.ok) { recharger(); throw Object.assign(new Error("base " + r.status), { status: r.status }); }
   }
@@ -278,7 +392,11 @@ function creerSalle(code, surChange, surConnexion) {
 }
 function messageErreur(e) {
   if (e.status === 0) return "Pas envoyé : vérifie la connexion du téléphone.";
-  if (e.status === 401 || e.status === 403) return "Refusé par la base (équipe supprimée entre-temps, ou règles Firebase à vérifier).";
+  if (e.status === 401 || e.status === 403) {
+    const s = session();
+    return s ? `Refusé : équipe supprimée entre-temps, ou ce compte n'est pas autorisé dans les règles Firebase (identifiant ${s.uid}).`
+      : "Refusé : connecte-toi pour modifier les scores.";
+  }
   return "La base a refusé la modification (erreur " + e.status + ").";
 }
 
@@ -295,24 +413,29 @@ function lancerAccueil() {
     location.href = urlVue(c, vue);
   };
   const champBase = el("input", { class: "champ", id: "adresse-base", placeholder: "https://…-default-rtdb.europe-west1.firebasedatabase.app", autocomplete: "off", autocapitalize: "off", spellcheck: "false", value: BASE || "" });
+  const champCle = el("input", { class: "champ", id: "cle-api", placeholder: "AIza…", autocomplete: "off", autocapitalize: "off", spellcheck: "false", value: CLE || "" });
   const enregistrerBase = () => {
-    const b = baseValide(champBase.value.trim().replace(/\/+$/, ""));
+    const b = BASE_FIXE || baseValide(champBase.value.trim().replace(/\/+$/, ""));
     if (!b) { toast("Adresse non reconnue : elle doit finir par firebasedatabase.app ou firebaseio.com."); champBase.focus(); return; }
-    stock("base", b);
-    location.href = location.pathname + "?base=" + encodeURIComponent(b);
+    const c = CLE_FIXE || cleValide(champCle.value.trim());
+    if (!c) { toast("Clé API non reconnue : copie la « Clé API Web » des paramètres du projet."); champCle.focus(); return; }
+    stock("base", b); stock("cle", c);
+    location.href = location.pathname;
   };
   const blocBase = el("div", { class: "bloc" },
-    el("label", { class: "etiquette", for: "adresse-base", text: "Adresse de ta base Firebase" }),
-    champBase,
-    el("button", { class: BASE ? "bouton" : "bouton principal", text: "Enregistrer l'adresse", onclick: enregistrerBase }),
-    el("p", { class: "note", text: "Firebase console → Realtime Database → onglet Données : l'adresse est en haut. Elle est ensuite transmise au téléphone par le QR code." }));
+    BASE_FIXE ? null : el("label", { class: "etiquette", for: "adresse-base", text: "Adresse de ta base Firebase" }),
+    BASE_FIXE ? null : champBase,
+    CLE_FIXE ? null : el("label", { class: "etiquette", for: "cle-api", text: "Clé API Web du projet" }),
+    CLE_FIXE ? null : champCle,
+    el("button", { class: BASE && CLE ? "bouton" : "bouton principal", text: "Enregistrer", onclick: enregistrerBase }),
+    el("p", { class: "note", text: "Voir LISEZMOI : l'adresse est dans Realtime Database → Données, la clé dans Paramètres du projet → Général. Le QR code les transmet ensuite au téléphone." }));
 
   $("#app").replaceChildren(el("main", { class: "accueil" }, el("div", { class: "accueil-carte" },
     el("div", { style: "display:grid;gap:10px" },
       el("span", { class: "etiquette", text: "Écran + télécommande" }),
       el("h1", { text: "Classement des équipes" }),
       el("p", { text: "Ouvre l'écran sur l'ordinateur d'affichage, puis scanne son QR code avec ton téléphone pour ajouter des points." })),
-    BASE_FIXE ? null : blocBase,
+    BASE_FIXE && CLE_FIXE ? null : blocBase,
     BASE ? el("div", { class: "bloc" },
       el("span", { class: "etiquette", text: "Sur l'ordinateur d'affichage" }),
       el("button", { class: "bouton principal", text: "Créer une salle et ouvrir l'écran", onclick: () => location.href = urlVue(aleatoire(16), "ecran") })) : null,
@@ -334,7 +457,7 @@ function lancerAccueil() {
    ============================================================ */
 function lancerEcran(code) {
   stock("derniere-salle", { code: normCode(code), vue: "ecran" });
-  let connexion = "attente", nettoyage = false, dernierOrdre = "";
+  let connexion = "attente", dernierOrdre = "";
   const lignes = new Map();
   const reduit = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -378,14 +501,18 @@ function lancerEcran(code) {
     liste.style.setProperty("--h", Math.floor(h) + "px");
   }
   function animerScore(span, de, a) {
+    const jeton = span._anim = (span._anim || 0) + 1;
     if (reduit || de === a) { span.textContent = a; return; }
     const t0 = performance.now(), duree = 650;
     const pas = t => {
+      if (span._anim !== jeton) return;
       const k = Math.min(1, (t - t0) / duree), e = 1 - Math.pow(1 - k, 3);
       span.textContent = Math.round(de + (a - de) * e);
       if (k < 1) requestAnimationFrame(pas);
     };
     requestAnimationFrame(pas);
+    // Valeur finale garantie, même si le navigateur suspend les animations (fenêtre masquée)
+    setTimeout(() => { if (span._anim === jeton) span.textContent = a; }, duree + 150);
   }
   function envol(l, d) {
     if (reduit) return;
@@ -414,7 +541,7 @@ function lancerEcran(code) {
         l._score = x.score; l.querySelector(".score").textContent = x.score;
         lignes.set(x.id, l);
       }
-      l.style.setProperty("--c", PALETTE[x.co]);
+      l.style.setProperty("--c", couleur(x.co));
       l.classList.toggle("tete", x.rang === 1 && x.score > 0);
       const [n, s] = ordinal(x.rang);
       l.querySelector(".rang").replaceChildren(n, el("sup", { text: s }));
@@ -439,13 +566,6 @@ function lancerEcran(code) {
       el("span", { class: "heure num", text: heure(h.ts) }))));
     if (!fil.children.length) fil.append(el("li", { class: "note", text: "Rien pour l'instant." }));
     rendreStatut();
-    // L'écran fait le ménage dans l'historique (on garde les 30 dernières actions)
-    if (connexion === "ok" && !nettoyage && etat.hist.length > GARDER_HIST + 10) {
-      nettoyage = true;
-      const maj = {};
-      for (const h of etat.hist.slice(GARDER_HIST)) maj["hist/" + h.c] = null;
-      salle.modifier(maj).catch(() => {}).finally(() => nettoyage = false);
-    }
   }
 
   const salle = creerSalle(code, rendre, s => { connexion = s; rendreStatut(); });
@@ -479,16 +599,44 @@ function lancerTele(code) {
   vuePoints.append(videPoints, zoneCartes, el("div", { class: "section-titre" }, el("span", { class: "etiquette", text: "Dernières actions" })), histo);
   const vueReglages = el("section", { class: "reglage", hidden: "" });
 
-  $("#app").replaceChildren(el("main", { class: "tele" },
+  // Sans connexion : lecture seule (les règles Firebase refusent de toute façon l'écriture)
+  const champEmail = el("input", { class: "champ", id: "email", type: "email", autocomplete: "username", inputmode: "email", autocapitalize: "off", placeholder: "E-mail" });
+  const champMdp = el("input", { class: "champ", id: "mot-de-passe", type: "password", autocomplete: "current-password", placeholder: "Mot de passe" });
+  const boutonConnexion = el("button", { class: "bouton principal", type: "submit", text: "Se connecter" });
+  const formConnexion = el("form", { class: "bloc", onsubmit: async e => {
+      e.preventDefault();
+      boutonConnexion.disabled = true; boutonConnexion.textContent = "Connexion…";
+      try { await connecter(EMAIL_ARBITRE.trim() || champEmail.value.trim(), champMdp.value); champMdp.value = ""; majMode(); toast("Connecté : tu peux modifier les scores."); }
+      catch (err) { toast(messageConnexion(err.message)); }
+      finally { boutonConnexion.disabled = false; boutonConnexion.textContent = "Se connecter"; }
+    } },
+    el("span", { class: "etiquette", text: "Lecture seule" }),
+    el("p", { class: "note", text: EMAIL_ARBITRE.trim() ? "Entre le mot de passe arbitre pour modifier les scores." : "Seules les personnes autorisées peuvent modifier les scores. Connecte-toi avec ton compte." }),
+    EMAIL_ARBITRE.trim() ? null : el("label", { class: "etiquette", for: "email", text: "E-mail" }),
+    EMAIL_ARBITRE.trim() ? null : champEmail,
+    el("label", { class: "etiquette", for: "mot-de-passe", text: EMAIL_ARBITRE.trim() ? "Mot de passe arbitre" : "Mot de passe" }), champMdp,
+    boutonConnexion);
+  const nav = el("nav", { class: "onglets", role: "tablist" }, bPoints, bReglages);
+  const racineTele = el("main", { class: "tele" },
     el("header", { class: "tele-tete" }, el("span", { class: "etiquette", text: "Télécommande · " + joliCode(code) }), h1, statut),
-    el("nav", { class: "onglets", role: "tablist" }, bPoints, bReglages),
-    vuePoints, vueReglages));
+    formConnexion, nav, vuePoints, vueReglages);
+  $("#app").replaceChildren(racineTele);
+  let admin = false;
+  function majMode() {
+    admin = !!session();
+    racineTele.classList.toggle("lecture", !admin);
+    formConnexion.hidden = admin; nav.hidden = !admin;
+    if (!admin && onglet !== "points") { choisir("points"); return; }
+    signatureReglages = "";
+    rendre();
+  }
 
   function rendreStatut() {
     let cls, txt;
     if (connexion === "refus") { cls = "ko"; txt = "Accès refusé : vérifie les règles Firebase"; }
     else if (connexion === "attente") { cls = "att"; txt = "Connexion…"; }
     else if (connexion !== "ok") { cls = "ko"; txt = "Hors ligne : reconnexion…"; }
+    else if (!admin) { cls = "att"; txt = "Scores en direct · lecture seule"; }
     else if (etat.ecran && Math.abs(Date.now() - etat.ecran) < 90000) { cls = "ok"; txt = "Connecté · écran ouvert"; }
     else { cls = "att"; txt = "Connecté · écran fermé (les points sont quand même enregistrés)"; }
     statut.replaceChildren(el("span", { class: "point " + cls }), txt);
@@ -508,15 +656,15 @@ function lancerTele(code) {
           el("div", { class: "carte-haut" }, el("span", { class: "pastille" }),
             el("div", { style: "min-width:0" }, el("div", { class: "nom" }), el("div", { class: "rangc" })),
             el("div", { class: "score num" })),
-          el("div", { class: "touches" }, touche(-1, "moins"), touche(1, "plus"), touche(2, "plus"), touche(5, "plus"), touche(10, "plus"),
+          el("div", { class: "touches" }, touche(-1, "moins"), touche(1, "plus"), touche(2, "plus"), touche(3, "plus"), touche(5, "plus"),
             el("button", { text: "…", "aria-label": "Autre montant", onclick: () => feuille(x.id) })));
         cartes.set(x.id, c);
       }
       const t = tampon.get(x.id)?.d || 0;
-      c.style.setProperty("--c", PALETTE[x.co]);
+      c.style.setProperty("--c", couleur(x.co));
       $(".nom", c).textContent = x.nom;
       const [n, s] = ordinal(rangs.get(x.id));
-      $(".rangc", c).textContent = `${n}${s} · ${NOMS_COULEURS[x.co]}`;
+      $(".rangc", c).textContent = `${n}${s} · ${nomCouleur(x.co)}`;
       const sc = $(".score", c); sc.textContent = x.score + t; sc.classList.toggle("envoi", t !== 0);
       zoneCartes.append(c);
     }
@@ -529,6 +677,25 @@ function lancerTele(code) {
     if (!histo.children.length) histo.append(el("li", { class: "note", text: "Les points ajoutés s'afficheront ici." }));
     if (onglet === "reglages") rendreReglages();
     rendreStatut();
+    // Ménage dans l'historique (on garde les 30 dernières actions), fait par une personne connectée
+    if (admin && connexion === "ok" && !nettoyage && etat.hist.length > GARDER_HIST + 10) {
+      nettoyage = true;
+      const maj = {};
+      for (const h of etat.hist.slice(GARDER_HIST)) maj["hist/" + h.c] = null;
+      salle.modifier(maj).catch(() => {}).finally(() => nettoyage = false);
+    }
+  }
+  let nettoyage = false;
+  // Sauvegarde automatique : toutes les 5 minutes au plus, seulement si les scores ont changé
+  let sauvegardeEnCours = false;
+  function sauvegardeAuto() {
+    if (!admin || connexion !== "ok" || sauvegardeEnCours || !etat.equipes.length) return;
+    const derniere = etat.sauvegardes[0];
+    if (derniere && Date.now() - derniere.ts < INTERVALLE_AUTO) return;
+    if (derniere && empreinte(derniere.equipes) === empreinte(etat.equipes)) return;
+    sauvegardeEnCours = true;
+    const maj = entreesSauvegarde(etat, "auto");
+    salle.modifier(maj, maj).catch(() => {}).finally(() => sauvegardeEnCours = false);
   }
   function choisir(o) {
     onglet = o;
@@ -562,7 +729,7 @@ function lancerTele(code) {
   let signatureReglages = "";
   function rendreReglages() {
     if (vueReglages.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
-    const sig = JSON.stringify([etat.titre, etat.equipes.map(x => [x.id, x.nom, x.co])]);
+    const sig = JSON.stringify([etat.titre, etat.equipes.map(x => [x.id, x.nom, x.co]), etat.sauvegardes.map(s => s.k)]);
     if (sig === signatureReglages && vueReglages.childElementCount) return;
     signatureReglages = sig;
     const titre = el("input", { class: "champ", id: "titre", value: etat.titre, maxlength: "60" });
@@ -579,15 +746,35 @@ function lancerTele(code) {
     };
     nomNouvelle.addEventListener("keydown", e => { if (e.key === "Enter") ajouter(); });
 
-    const reset = el("div", { class: "confirm" });
-    const boutonReset = () => reset.replaceChildren(el("button", { class: "bouton danger", text: "Remettre tous les scores à zéro", onclick: () =>
-      reset.replaceChildren(el("span", { text: "Tous les scores repartent de 0 et l'historique est effacé. Sûr ?" }),
-        el("button", { class: "bouton danger", text: "Oui, remettre à zéro", onclick: () => {
-          const maj = { hist: null };
-          for (const x of etat.equipes) maj[`equipes/${x.id}/score`] = 0;
-          ecrire(maj, maj); boutonReset();
-        } }),
-        el("button", { class: "bouton", text: "Non", onclick: boutonReset })) }));
+    // Remise à zéro : exige le mot de passe admin, vérifié par Firebase et jamais mémorisé
+    const reset = el("div", { class: "reglage" });
+    const boutonReset = () => reset.replaceChildren(el("button", { class: "bouton danger", text: "Remettre tous les scores à zéro", onclick: () => {
+      if (!EMAIL_ADMIN.trim()) { toast("Remise à zéro non configurée : renseigne EMAIL_ADMIN dans index.html (voir LISEZMOI)."); return; }
+      const mdp = el("input", { class: "champ", id: "mdp-admin", type: "password", autocomplete: "off", placeholder: "Mot de passe admin" });
+      const valider = el("button", { class: "bouton danger", type: "submit", text: "Remettre à zéro" });
+      reset.replaceChildren(el("form", { class: "reglage", onsubmit: async e => {
+          e.preventDefault();
+          if (!mdp.value) { mdp.focus(); return; }
+          valider.disabled = true; valider.textContent = "Vérification…";
+          try {
+            const j = await authentifier(EMAIL_ADMIN.trim(), mdp.value);
+            const maj = { hist: null, ...entreesSauvegarde(etat, "remise") }; // copie des scores dans la même écriture
+            for (const x of etat.equipes) maj[`equipes/${x.id}/score`] = 0;
+            await salle.modifier(maj, null, j.idToken);
+            toast("Scores remis à zéro.");
+            boutonReset();
+          } catch (err) {
+            toast(err.status !== undefined ? messageErreur(err)
+              : /INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|EMAIL_NOT_FOUND/.test(err.message) ? "Mot de passe admin incorrect." : messageConnexion(err.message));
+            valider.disabled = false; valider.textContent = "Remettre à zéro";
+            mdp.value = ""; mdp.focus();
+          }
+        } },
+        el("p", { class: "note", text: "Tous les scores repartent de 0 et l'historique est effacé. Une sauvegarde est faite juste avant. Entre le mot de passe admin pour confirmer." }),
+        el("label", { class: "etiquette", for: "mdp-admin", text: "Mot de passe admin" }), mdp,
+        el("div", { class: "rangee" }, valider, el("button", { class: "bouton", type: "button", text: "Annuler", onclick: boutonReset }))));
+      mdp.focus();
+    } }));
     boutonReset();
 
     vueReglages.replaceChildren(
@@ -604,16 +791,98 @@ function lancerTele(code) {
         el("button", { class: "bouton principal", text: "Ajouter l'équipe", onclick: ajouter })),
       el("span", { class: "etiquette", text: `Équipes (${etat.equipes.length})` }),
       ...etat.equipes.map(ligneEquipe),
+      blocSauvegardes(),
       el("div", { class: "bloc" }, el("span", { class: "etiquette", text: "Partie" }), reset,
         el("p", { class: "note", text: "Adresse de l'écran (à ouvrir sur l'ordinateur d'affichage) :" }),
         el("div", { class: "lien", text: urlVue(code, "ecran") }),
-        el("button", { class: "bouton", text: "Changer de salle", onclick: () => location.href = location.pathname })));
+        el("button", { class: "bouton", text: "Changer de salle", onclick: () => location.href = location.pathname })),
+      el("div", { class: "bloc" }, el("span", { class: "etiquette", text: "Compte" }),
+        el("p", { class: "note", text: EMAIL_ARBITRE.trim() ? "Connecté en arbitre." : "Connecté : " + (session()?.email || "?") }),
+        el("button", { class: "bouton", text: "Se déconnecter", onclick: () => { deconnecter(); majMode(); } })));
   }
+  /* ----- Sauvegardes : liste, sauvegarde manuelle, restauration (mot de passe admin) ----- */
+  function blocSauvegardes() {
+    const liste = el("ul", { class: "sauvegardes" }, ...etat.sauvegardes.slice(0, 10).map(ligneSauvegarde));
+    if (!etat.sauvegardes.length) liste.append(el("li", { class: "note", text: "Aucune sauvegarde pour l'instant. La première est faite automatiquement dans les 5 minutes qui suivent un changement de score." }));
+    const reste = etat.sauvegardes.length - 10;
+    return el("div", { class: "bloc" },
+      el("span", { class: "etiquette", text: "Sauvegardes" }),
+      el("p", { class: "note", text: "Copie automatique des scores toutes les 5 minutes s'ils ont changé (quand un téléphone arbitre est ouvert), et juste avant chaque remise à zéro, suppression d'équipe ou restauration." }),
+      el("button", { class: "bouton", type: "button", text: "Sauvegarder maintenant", onclick: () => {
+        if (!etat.equipes.length) { toast("Aucune équipe à sauvegarder."); return; }
+        const maj = entreesSauvegarde(etat, "manuelle");
+        signatureReglages = "";
+        salle.modifier(maj, maj).then(() => toast("Scores sauvegardés.")).catch(e => toast(messageErreur(e)));
+      } }),
+      liste,
+      reste > 0 ? el("p", { class: "note", text: `+ ${reste} sauvegarde${reste > 1 ? "s" : ""} plus ancienne${reste > 1 ? "s" : ""}, gardée${reste > 1 ? "s" : ""} dans la base.` }) : null);
+  }
+  function ligneSauvegarde(s) {
+    const zone = el("div");
+    const ouvrir = () => {
+      if (!EMAIL_ADMIN.trim()) { toast("Restauration non configurée : renseigne EMAIL_ADMIN dans index.html (voir LISEZMOI)."); return; }
+      const mdp = el("input", { class: "champ", id: "mdp-restaurer", type: "password", autocomplete: "off", placeholder: "Mot de passe admin" });
+      const valider = el("button", { class: "bouton danger", type: "submit", text: "Restaurer" });
+      zone.replaceChildren(el("form", { class: "reglage", onsubmit: async e => {
+          e.preventDefault();
+          if (!mdp.value) { mdp.focus(); return; }
+          valider.disabled = true; valider.textContent = "Vérification…";
+          try {
+            const j = await authentifier(EMAIL_ADMIN.trim(), mdp.value);
+            const equipes = {};
+            for (const q of s.equipes) equipes[q.id] = { nom: q.nom, co: q.co, score: q.score, ordre: q.ordre };
+            // L'état actuel est sauvegardé d'abord : une restauration se rattrape elle aussi
+            const maj = { ...entreesSauvegarde(etat, "restauration"), titre: s.titre, equipes, hist: null };
+            delete maj["sauvegardes/" + s.k];
+            await salle.modifier(maj, null, j.idToken);
+            mdp.blur(); zone.replaceChildren(); // ferme le formulaire pour que la liste se redessine
+            signatureReglages = "";
+            rendre();
+            toast(`Scores restaurés (${dateSauvegarde(s.ts)}).`);
+          } catch (err) {
+            toast(err.status !== undefined ? messageErreur(err)
+              : /INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|EMAIL_NOT_FOUND/.test(err.message) ? "Mot de passe admin incorrect." : messageConnexion(err.message));
+            valider.disabled = false; valider.textContent = "Restaurer";
+            mdp.value = ""; mdp.focus();
+          }
+        } },
+        el("p", { class: "note", text: "Les scores et les équipes reviennent à cet état. L'historique est effacé, et l'état actuel est sauvegardé avant." }),
+        el("label", { class: "etiquette", for: "mdp-restaurer", text: "Mot de passe admin" }), mdp,
+        el("div", { class: "rangee" }, valider, el("button", { class: "bouton", type: "button", text: "Annuler", onclick: () => zone.replaceChildren() }))));
+      mdp.focus();
+    };
+    return el("li", { class: "sauvegarde" },
+      el("div", { class: "sauvegarde-haut" },
+        el("div", { style: "min-width:0" },
+          el("strong", { class: "num", text: dateSauvegarde(s.ts) }),
+          el("span", { class: "note", text: " · " + RAISONS[s.raison] })),
+        el("button", { class: "bouton", type: "button", text: "Restaurer", onclick: ouvrir })),
+      el("p", { class: "note resume", text: resumeSauvegarde(s) }),
+      zone);
+  }
+  // 10 couleurs prêtes + une couleur libre (code HEX ou sélecteur du téléphone)
   function selecteur(actuel, surChoix) {
     const boite = el("div", { class: "couleurs", role: "group", "aria-label": "Couleur" });
-    PALETTE.forEach((c, i) => boite.append(el("button", { style: `--c:${c}`, "aria-label": NOMS_COULEURS[i], "aria-pressed": i === actuel, onclick: () => {
-      boite.querySelectorAll("button").forEach((b, j) => b.setAttribute("aria-pressed", j === i)); surChoix(i);
-    } })));
+    const pastilles = PALETTE.map((c, i) => el("button", { type: "button", style: `--c:${c}`, "aria-label": NOMS_COULEURS[i], "aria-pressed": i === actuel, onclick: () => choisirCo(i) }));
+    const hexActuel = estHex(actuel) ? actuel.toLowerCase() : "";
+    const nuancier = el("input", { type: "color", class: "nuancier", "aria-label": "Choisir une couleur", value: hexActuel || couleur(actuel) });
+    const champHex = el("input", { class: "champ hex", "aria-label": "Code couleur HEX", placeholder: "#RRGGBB", maxlength: "7", autocapitalize: "off", spellcheck: "false", value: hexActuel.toUpperCase() });
+    function choisirCo(co) {
+      pastilles.forEach((b, j) => b.setAttribute("aria-pressed", j === co));
+      champHex.classList.toggle("actif", estHex(co));
+      if (estHex(co)) { champHex.value = co.toUpperCase(); nuancier.value = co; } else champHex.value = "";
+      surChoix(co);
+    }
+    nuancier.addEventListener("change", () => choisirCo(nuancier.value.toLowerCase()));
+    champHex.addEventListener("change", () => {
+      if (!champHex.value.trim()) return;
+      const h = lireHex(champHex.value);
+      if (!h) { toast("Code couleur invalide : utilise le format #RRGGBB, par exemple #1E90FF."); return; }
+      choisirCo(h);
+    });
+    champHex.addEventListener("keydown", e => { if (e.key === "Enter") champHex.blur(); });
+    champHex.classList.toggle("actif", !!hexActuel);
+    boite.append(...pastilles, el("span", { class: "hex-zone" }, nuancier, champHex));
     return boite;
   }
   function ligneEquipe(x) {
@@ -626,9 +895,9 @@ function lancerTele(code) {
     nom.addEventListener("keydown", e => { if (e.key === "Enter") nom.blur(); });
     const zone = el("div", { class: "confirm" });
     const boutonSuppr = () => zone.replaceChildren(el("button", { class: "bouton danger", text: "Supprimer", onclick: () =>
-      zone.replaceChildren(el("span", { text: `Supprimer « ${x.nom} » et son score ?` }),
+      zone.replaceChildren(el("span", { text: `Supprimer « ${x.nom} » et son score ? Une sauvegarde est faite juste avant.` }),
         el("button", { class: "bouton danger", text: "Oui, supprimer", onclick: () => {
-          const maj = { [`equipes/${x.id}`]: null };
+          const maj = { ...entreesSauvegarde(etat, "suppression"), [`equipes/${x.id}`]: null };
           for (const h of etat.hist) if (h.e === x.id) maj["hist/" + h.c] = null;
           signatureReglages = "";
           ecrire(maj, maj);
@@ -664,7 +933,9 @@ function lancerTele(code) {
 
   const salle = creerSalle(code, () => rendre(), s => { connexion = s; rendreStatut(); });
   choisir("points");
+  majMode();
   setInterval(rendreStatut, 10000);
+  setInterval(sauvegardeAuto, 60000);
   salle.connecter();
 }
 
