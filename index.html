@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Classement des équipes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+/* Tableau d'affichage sombre (un seul thème, voulu pour un écran projeté) :
+   lignes d'équipes pleine largeur dont le remplissage coloré mesure l'écart au leader. */
+:root{
+  --fond:#0d1524; --surface:#151f35; --surface-2:#1c2843; --ligne:#2a3858;
+  --texte:#eef1f7; --doux:#97a3bf; --or:#f3bf4f; --ok:#4fd18b; --alerte:#ff7a6b; --attente:#f0a83a;
+  --f-titre:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-texte:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body,#app{height:100%}
+body{margin:0;background:var(--fond);color:var(--texte);font:16px/1.45 var(--f-texte);-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--or);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums}
+.etiquette{font:600 .75rem/1 var(--f-texte);letter-spacing:.12em;text-transform:uppercase;color:var(--doux)}
+.point{display:inline-block;width:.6em;height:.6em;border-radius:50%;background:var(--doux);vertical-align:.05em;margin-right:.45em}
+.point.ok{background:var(--ok)} .point.ko{background:var(--alerte)} .point.att{background:var(--attente)}
+.bouton{border:1px solid var(--ligne);background:var(--surface-2);border-radius:10px;padding:.7em 1.1em;font-weight:600}
+.bouton:hover{border-color:var(--doux)}
+.bouton.principal{background:var(--or);border-color:var(--or);color:#1a1405}
+.bouton.danger{border-color:color-mix(in srgb,var(--alerte) 60%,transparent);color:var(--alerte)}
+.champ{width:100%;background:var(--fond);border:1px solid var(--ligne);border-radius:10px;padding:.7em .85em}
+.champ:focus{border-color:var(--or);outline:none}
+
+/* ---------- Accueil ---------- */
+.accueil{min-height:100%;display:grid;place-items:center;padding-block:32px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.accueil-carte{width:100%;max-width:440px;display:grid;gap:22px}
+.accueil h1{font:800 clamp(2.4rem,9vw,3.4rem)/.95 var(--f-titre);margin:0;text-transform:uppercase;letter-spacing:.01em;text-wrap:balance}
+.accueil p{margin:0;color:var(--doux)}
+.bloc{display:grid;gap:10px;padding:18px;border:1px solid var(--ligne);border-radius:14px;background:var(--surface)}
+.rangee{display:flex;gap:10px;flex-wrap:wrap}
+.rangee>.bouton{flex:1 1 140px}
+
+/* ---------- Écran ---------- */
+.ecran{height:100%;display:flex;flex-direction:column;padding-block:2.2vh;padding-left:max(16px,env(safe-area-inset-left,0px),2.5vw);padding-right:max(16px,env(safe-area-inset-right,0px),2.5vw);gap:2vh;overflow:hidden}
+.ecran-tete{display:flex;align-items:flex-end;gap:2vw;flex-wrap:wrap}
+.ecran-tete h1{font:800 clamp(1.8rem,5.2vh,4.2rem)/.95 var(--f-titre);margin:0;text-transform:uppercase;letter-spacing:.01em;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.ecran-etat{display:flex;align-items:center;gap:1.4vw;color:var(--doux);font-size:clamp(.8rem,1.7vh,1.1rem)}
+.ecran-etat .bouton{padding:.45em .8em;font-size:inherit}
+.ecran-corps{flex:1;min-height:0;display:flex;gap:2vw}
+.liste{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--ecart,10px);position:relative}
+.equipe{position:relative;height:var(--h,80px);flex:0 0 auto;border-radius:12px;background:var(--surface);overflow:hidden;
+  display:grid;grid-template-columns:2.2em minmax(0,1fr) auto;align-items:center;gap:.6em;padding:0 .7em;font-size:clamp(12px,calc(var(--h,80px) * .4),64px)}
+.equipe .barre{position:absolute;inset:0 auto 0 0;width:0;background:color-mix(in srgb,var(--c) 30%,transparent);border-right:3px solid var(--c);transition:width .7s cubic-bezier(.2,.8,.2,1)}
+.equipe>*:not(.barre){position:relative}
+.equipe .rang{font:800 1.15em/1 var(--f-titre);color:var(--doux);text-align:center}
+.equipe .rang sup{font-size:.5em;vertical-align:.7em;margin-left:.05em}
+.equipe .nom{font:700 .9em/1.05 var(--f-texte);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.equipe .score{font:800 1.5em/1 var(--f-titre);font-variant-numeric:tabular-nums;text-align:right;min-width:2ch}
+.equipe.tete{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--or) 70%,transparent)}
+.equipe.tete .rang{color:var(--or)}
+.envol{position:absolute;right:3.2em;top:50%;font:800 .9em/1 var(--f-titre);pointer-events:none;animation:envol 1.6s ease-out forwards;font-variant-numeric:tabular-nums}
+.envol.plus{color:var(--ok)} .envol.moins{color:var(--alerte)}
+@keyframes envol{0%{opacity:0;transform:translateY(-30%) scale(.7)}15%{opacity:1;transform:translateY(-50%) scale(1.1)}100%{opacity:0;transform:translateY(-160%) scale(1)}}
+.vide{flex:1;display:grid;place-items:center;text-align:center;color:var(--doux);font-size:clamp(1rem,2.6vh,1.6rem);border:2px dashed var(--ligne);border-radius:16px;padding:4vh 2vw}
+.vide strong{display:block;color:var(--texte);font:700 1.6em/1.1 var(--f-titre);text-transform:uppercase;margin-bottom:.4em}
+.cote{width:clamp(150px,17vw,260px);display:flex;flex-direction:column;gap:2vh;min-height:0}
+.qr-carte{background:var(--surface);border:1px solid var(--ligne);border-radius:14px;padding:1.6vh;display:grid;gap:1vh;justify-items:center;text-align:center}
+.qr{background:#fff;padding:8px;border-radius:8px;line-height:0;width:100%;max-width:200px}
+.qr img,.qr canvas{width:100%!important;height:auto!important}
+.code{font:700 clamp(.85rem,1.8vh,1.15rem)/1.2 var(--f-titre);letter-spacing:.06em;color:var(--texte);word-break:break-all}
+.fil{display:grid;gap:.8vh;font-size:clamp(.8rem,1.8vh,1.1rem);overflow:hidden}
+.fil li{display:flex;gap:.5em;align-items:baseline;list-style:none}
+.fil ul{margin:0;padding:0;display:grid;gap:.7vh}
+.fil .delta{font:700 1.1em/1 var(--f-titre);min-width:3ch;text-align:right}
+.fil .heure{color:var(--doux);margin-left:auto;font-size:.85em}
+.fil .qui{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@media (max-aspect-ratio:1/1){.ecran-corps{flex-direction:column}.cote{width:auto;flex-direction:row;flex-wrap:wrap}.qr-carte{flex:0 0 auto;width:180px}.fil{flex:1 1 200px}}
+
+/* ---------- Télécommande ---------- */
+.tele{max-width:560px;margin:0 auto;padding-block:14px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:16px}
+.tele-tete{display:grid;gap:4px}
+.tele-tete h1{font:800 1.9rem/1 var(--f-titre);text-transform:uppercase;margin:0;overflow-wrap:anywhere}
+.statut{font-size:.9rem;color:var(--doux)}
+.onglets{display:grid;grid-template-columns:1fr 1fr;background:var(--surface);border:1px solid var(--ligne);border-radius:12px;padding:4px;gap:4px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+.onglets button{border:0;background:none;border-radius:9px;padding:.6em;font-weight:600;color:var(--doux)}
+.onglets button[aria-selected="true"]{background:var(--surface-2);color:var(--texte)}
+.cartes{display:grid;gap:12px}
+.carte{background:var(--surface);border:1px solid var(--ligne);border-radius:14px;padding:12px;display:grid;gap:10px}
+.carte-haut{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center}
+.pastille{width:14px;height:14px;border-radius:50%;background:var(--c)}
+.carte .nom{font-weight:700;font-size:1.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.carte .rangc{color:var(--doux);font-size:.85rem;font-weight:500}
+.carte .score{font:800 2rem/1 var(--f-titre);font-variant-numeric:tabular-nums}
+.carte .score.envoi{color:var(--attente)}
+.touches{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.touches button{border:1px solid var(--ligne);background:var(--surface-2);border-radius:10px;padding:.75em 0;font:700 1.05rem/1 var(--f-titre);touch-action:manipulation}
+.touches button:active{transform:scale(.95);background:var(--ligne)}
+.touches .moins{color:var(--alerte)}
+.touches .plus{color:var(--ok)}
+.section-titre{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px}
+.histo{display:grid;gap:6px;margin:0;padding:0;list-style:none}
+.histo li{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface);border-radius:10px;font-size:.95rem}
+.histo .qui{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.histo .delta{font:700 1.05rem/1 var(--f-titre);min-width:3.2ch;text-align:right}
+.histo .annule{opacity:.5;text-decoration:line-through}
+.histo button{border:1px solid var(--ligne);background:none;border-radius:8px;padding:.3em .6em;font-size:.85rem;color:var(--doux)}
+.reglage{display:grid;gap:10px}
+.equipe-edit{display:grid;gap:8px;padding:12px;background:var(--surface);border:1px solid var(--ligne);border-radius:12px}
+.equipe-edit .ligne1{display:flex;gap:8px}
+.equipe-edit .ligne1 .champ{flex:1;min-width:0}
+.couleurs{display:flex;flex-wrap:wrap;gap:8px}
+.couleurs button{width:30px;height:30px;border-radius:50%;border:2px solid transparent;background:var(--c);padding:0}
+.couleurs button[aria-pressed="true"]{border-color:var(--texte);box-shadow:0 0 0 2px var(--fond) inset}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.95rem}
+.note{color:var(--doux);font-size:.9rem;margin:0}
+.lien{word-break:break-all;font-size:.85rem;color:var(--doux);background:var(--fond);padding:8px;border-radius:8px;border:1px solid var(--ligne);user-select:all}
+
+.feuille-fond{position:fixed;inset:0;background:rgba(5,9,18,.7);display:grid;align-items:end;z-index:20}
+.feuille{background:var(--surface);border-top:1px solid var(--ligne);border-radius:18px 18px 0 0;padding:18px;padding-bottom:calc(18px + env(safe-area-inset-bottom,0px));padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));display:grid;gap:12px;max-width:560px;width:100%;margin:0 auto}
+.feuille h2{margin:0;font:700 1.4rem/1.1 var(--f-titre);text-transform:uppercase}
+.feuille .champ{font:800 2rem/1 var(--f-titre);text-align:center}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--ligne);padding:.7em 1em;border-radius:10px;z-index:30;max-width:calc(100% - 32px);font-size:.95rem}
+@media (prefers-reduced-motion:reduce){.equipe .barre{transition:none}.envol{animation-duration:.01s}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script>
+"use strict";
+/* ============================================================
+   ADRESSE DE TA BASE FIREBASE (Realtime Database), voir LISEZMOI.md.
+   Exemple : "https://mon-classement-default-rtdb.europe-west1.firebasedatabase.app"
+   Laisse vide pour la saisir dans la page d'accueil.
+   ============================================================ */
+const BASE_FIREBASE = "https://scoring-concours-de-bravoure-default-rtdb.europe-west1.firebasedatabase.app/";
+
+/* Les scores vivent dans la base, sous /salles/<code>. Les ajouts de points
+   sont des incréments atomiques côté serveur : plusieurs téléphones peuvent
+   marquer en même temps, et l'écran n'a pas besoin d'être ouvert. */
+const PALETTE = ["#ff5d5d","#ff9f3a","#f4d03f","#5fd17a","#2ec4b6","#4ea8ff","#7b6cff","#d46cff","#ff6fb1","#c3c9d6"];
+const NOMS_COULEURS = ["Rouge","Orange","Jaune","Vert","Turquoise","Bleu","Indigo","Violet","Rose","Gris"];
+const MAX_EQUIPES = 16, GARDER_HIST = 30;
+
+const $ = (s, r = document) => r.querySelector(s);
+function el(tag, props = {}, ...enfants) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "style") e.style.cssText = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of enfants) if (c != null) e.append(c);
+  return e;
+}
+function stock(cle, val) {
+  try {
+    if (val === undefined) return JSON.parse(localStorage.getItem(cle));
+    localStorage.setItem(cle, JSON.stringify(val));
+  } catch { return null; }
+}
+function aleatoire(n = 8) {
+  const a = "abcdefghjkmnpqrstuvwxyz23456789";
+  return [...crypto.getRandomValues(new Uint8Array(n))].map(x => a[x % a.length]).join("");
+}
+const normCode = c => String(c || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const joliCode = c => normCode(c).match(/.{1,4}/g)?.join("-") || "";
+const ordinal = n => n === 1 ? ["1", "er"] : [String(n), "e"];
+const signe = d => (d > 0 ? "+" : "−") + Math.abs(d);
+const heure = ts => new Date(ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const cleTemps = () => Date.now().toString(36).padStart(9, "0") + aleatoire(4); // triable par date
+const inc = d => ({ ".sv": { increment: d } });
+let toastMinuteur;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastMinuteur); toastMinuteur = setTimeout(() => t.hidden = true, 3500);
+}
+const estId = v => typeof v === "string" && /^[a-z0-9]{1,16}$/.test(v);
+const estCouleur = v => Number.isInteger(v) && v >= 0 && v < PALETTE.length;
+const texte = (v, max) => typeof v === "string" ? v.trim().slice(0, max) : "";
+
+/* ---------- Adresse de la base ---------- */
+const params = new URLSearchParams(location.search);
+function baseValide(b) {
+  try {
+    const u = new URL(String(b || ""));
+    if (u.protocol === "https:" && /\.(firebaseio\.com|firebasedatabase\.app)$/.test(u.hostname)) return u.origin;
+    if (location.hostname === "localhost" && u.hostname === "localhost") return u.origin; // tests locaux
+  } catch {}
+  return null;
+}
+const BASE_FIXE = baseValide(BASE_FIREBASE);
+const BASE = BASE_FIXE || baseValide(params.get("base")) || baseValide(stock("base"));
+if (BASE && !BASE_FIXE) stock("base", BASE);
+function urlVue(code, vue) {
+  const u = new URL(location.href);
+  u.search = ""; u.hash = "";
+  u.searchParams.set("salle", joliCode(code));
+  u.searchParams.set("vue", vue);
+  if (!BASE_FIXE && BASE) u.searchParams.set("base", BASE);
+  return u.toString();
+}
+const pageHebergee = () => location.protocol === "https:" || location.protocol === "http:";
+
+/* ---------- Lecture de l'arbre de la salle (données non fiables : on valide) ---------- */
+function lireEtat(a) {
+  a = a && typeof a === "object" ? a : {};
+  const equipes = Object.entries(a.equipes && typeof a.equipes === "object" ? a.equipes : {})
+    .filter(([id, q]) => estId(id) && q && texte(q.nom, 32) && Number.isFinite(q.score))
+    .map(([id, q]) => ({ id, nom: texte(q.nom, 32), co: estCouleur(q.co) ? q.co : 9, score: q.score, ordre: Number(q.ordre) || 0 }))
+    .sort((x, y) => x.ordre - y.ordre || (x.id < y.id ? -1 : 1))
+    .slice(0, MAX_EQUIPES);
+  const hist = Object.entries(a.hist && typeof a.hist === "object" ? a.hist : {})
+    .filter(([k, h]) => estId(k) && h && estId(h.e) && Number.isFinite(h.d))
+    .map(([k, h]) => ({ c: k, e: h.e, d: h.d, ts: Number(h.ts) || 0, x: h.x ? 1 : 0 }))
+    .sort((x, y) => (x.c < y.c ? 1 : -1));
+  return { titre: texte(a.titre, 60) || "Classement", equipes, hist, ecran: Number(a.ecran) || 0 };
+}
+function classer(equipes) {
+  const tri = [...equipes].sort((a, b) => b.score - a.score || a.nom.localeCompare(b.nom, "fr"));
+  let rang = 0, prec = null;
+  tri.forEach((x, i) => { if (x.score !== prec) { rang = i + 1; prec = x.score; } x.rang = rang; });
+  return tri;
+}
+
+/* ---------- Connexion à la salle (API REST + flux temps réel de Firebase) ---------- */
+function creerSalle(code, surChange, surConnexion) {
+  const racine = `${BASE}/salles/${normCode(code)}`;
+  const cleLocale = "salle:" + normCode(code);
+  let arbre = stock(cleLocale), source = null, minuteur = null;
+  const lire = e => { try { return JSON.parse(e.data); } catch { return null; } };
+  function poser(chemin, valeur) {
+    const parts = String(chemin).split("/").filter(Boolean);
+    if (!parts.length) { arbre = valeur; return; }
+    if (!arbre || typeof arbre !== "object") arbre = {};
+    let n = arbre;
+    for (const p of parts.slice(0, -1)) { if (!n[p] || typeof n[p] !== "object") n[p] = {}; n = n[p]; }
+    const der = parts[parts.length - 1];
+    if (valeur === null) delete n[der]; else n[der] = valeur;
+  }
+  function notifier(direct) {
+    clearTimeout(minuteur); minuteur = setTimeout(() => stock(cleLocale, arbre), 400);
+    surChange(arbre, direct);
+  }
+  function connecter() {
+    source = new EventSource(racine + ".json");
+    source.onopen = () => surConnexion("ok");
+    source.addEventListener("put", e => { const m = lire(e); if (!m) return; surConnexion("ok"); poser(m.path, m.data); notifier(true); });
+    source.addEventListener("patch", e => {
+      const m = lire(e); if (!m || !m.data) return;
+      const p = String(m.path).replace(/\/+$/, "");
+      for (const [k, v] of Object.entries(m.data)) poser(p + "/" + k, v);
+      notifier(true);
+    });
+    source.addEventListener("cancel", () => { surConnexion("refus"); source.close(); });
+    source.onerror = () => { surConnexion("ko"); if (source.readyState === EventSource.CLOSED) setTimeout(connecter, 4000); };
+  }
+  async function recharger() {
+    try { const r = await fetch(racine + ".json"); if (r.ok) { arbre = await r.json(); notifier(false); } } catch {}
+  }
+  // maj : écriture multi-chemins envoyée à Firebase ; optimiste : valeurs affichées tout de suite
+  async function modifier(maj, optimiste) {
+    if (optimiste) { for (const [k, v] of Object.entries(optimiste)) poser(k, v); notifier(false); }
+    let r;
+    try { r = await fetch(racine + ".json", { method: "PATCH", body: JSON.stringify(maj) }); }
+    catch { recharger(); throw Object.assign(new Error("réseau"), { status: 0 }); }
+    if (!r.ok) { recharger(); throw Object.assign(new Error("base " + r.status), { status: r.status }); }
+  }
+  return { connecter, modifier, get arbre() { return arbre; } };
+}
+function messageErreur(e) {
+  if (e.status === 0) return "Pas envoyé : vérifie la connexion du téléphone.";
+  if (e.status === 401 || e.status === 403) return "Refusé par la base (équipe supprimée entre-temps, ou règles Firebase à vérifier).";
+  return "La base a refusé la modification (erreur " + e.status + ").";
+}
+
+/* ============================================================
+   ACCUEIL
+   ============================================================ */
+function lancerAccueil() {
+  document.title = "Classement des équipes";
+  const derniere = stock("derniere-salle");
+  const champ = el("input", { class: "champ", id: "code-salle", placeholder: "ex. k7m2-9qxa-4tbv-p3nc", autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
+  const aller = vue => {
+    const c = normCode(champ.value);
+    if (c.length !== 16) { toast("Le code de salle fait 16 caractères (lettres et chiffres)."); champ.focus(); return; }
+    location.href = urlVue(c, vue);
+  };
+  const champBase = el("input", { class: "champ", id: "adresse-base", placeholder: "https://…-default-rtdb.europe-west1.firebasedatabase.app", autocomplete: "off", autocapitalize: "off", spellcheck: "false", value: BASE || "" });
+  const enregistrerBase = () => {
+    const b = baseValide(champBase.value.trim().replace(/\/+$/, ""));
+    if (!b) { toast("Adresse non reconnue : elle doit finir par firebasedatabase.app ou firebaseio.com."); champBase.focus(); return; }
+    stock("base", b);
+    location.href = location.pathname + "?base=" + encodeURIComponent(b);
+  };
+  const blocBase = el("div", { class: "bloc" },
+    el("label", { class: "etiquette", for: "adresse-base", text: "Adresse de ta base Firebase" }),
+    champBase,
+    el("button", { class: BASE ? "bouton" : "bouton principal", text: "Enregistrer l'adresse", onclick: enregistrerBase }),
+    el("p", { class: "note", text: "Firebase console → Realtime Database → onglet Données : l'adresse est en haut. Elle est ensuite transmise au téléphone par le QR code." }));
+
+  $("#app").replaceChildren(el("main", { class: "accueil" }, el("div", { class: "accueil-carte" },
+    el("div", { style: "display:grid;gap:10px" },
+      el("span", { class: "etiquette", text: "Écran + télécommande" }),
+      el("h1", { text: "Classement des équipes" }),
+      el("p", { text: "Ouvre l'écran sur l'ordinateur d'affichage, puis scanne son QR code avec ton téléphone pour ajouter des points." })),
+    BASE_FIXE ? null : blocBase,
+    BASE ? el("div", { class: "bloc" },
+      el("span", { class: "etiquette", text: "Sur l'ordinateur d'affichage" }),
+      el("button", { class: "bouton principal", text: "Créer une salle et ouvrir l'écran", onclick: () => location.href = urlVue(aleatoire(16), "ecran") })) : null,
+    BASE ? el("div", { class: "bloc" },
+      el("label", { class: "etiquette", for: "code-salle", text: "J'ai déjà un code de salle" }),
+      champ,
+      el("div", { class: "rangee" },
+        el("button", { class: "bouton", text: "Ouvrir la télécommande", onclick: () => aller("telecommande") }),
+        el("button", { class: "bouton", text: "Ouvrir l'écran", onclick: () => aller("ecran") }))) : null,
+    BASE && derniere && normCode(derniere.code).length === 16 ? el("div", { class: "bloc" },
+      el("span", { class: "etiquette", text: "Dernière salle sur cet appareil" }),
+      el("div", { class: "code", text: joliCode(derniere.code) }),
+      el("button", { class: "bouton", text: derniere.vue === "ecran" ? "Reprendre l'écran" : "Reprendre la télécommande", onclick: () => location.href = urlVue(derniere.code, derniere.vue) })) : null
+  )));
+}
+
+/* ============================================================
+   ÉCRAN
+   ============================================================ */
+function lancerEcran(code) {
+  stock("derniere-salle", { code: normCode(code), vue: "ecran" });
+  let connexion = "attente", nettoyage = false, dernierOrdre = "";
+  const lignes = new Map();
+  const reduit = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const h1 = el("h1");
+  const statut = el("span");
+  const plein = el("button", { class: "bouton", text: "Plein écran", onclick: () => document.documentElement.requestFullscreen?.().catch(() => {}) });
+  const liste = el("div", { class: "liste" });
+  const vide = el("div", { class: "vide" },
+    el("strong", { text: "Aucune équipe" }),
+    el("span", { text: "Scanne le QR code avec ton téléphone, puis ajoute les équipes dans l'onglet Réglages de la télécommande." }));
+  const fil = el("ul");
+  const qr = el("div", { class: "qr" });
+  $("#app").replaceChildren(el("main", { class: "ecran" },
+    el("header", { class: "ecran-tete" }, h1, el("div", { class: "ecran-etat" }, statut, plein)),
+    el("div", { class: "ecran-corps" },
+      el("div", { class: "liste-cadre", style: "flex:1;min-width:0;display:flex;flex-direction:column" }, liste, vide),
+      el("aside", { class: "cote" },
+        el("div", { class: "qr-carte" }, el("span", { class: "etiquette", text: "Télécommande" }), qr, el("span", { class: "code", text: joliCode(code) })),
+        el("div", { class: "fil" }, el("span", { class: "etiquette", text: "Dernières actions" }), fil)))));
+
+  if (pageHebergee() && window.QRCode) {
+    new QRCode(qr, { text: urlVue(code, "telecommande"), width: 256, height: 256, colorDark: "#0d1524", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
+  } else {
+    qr.replaceWith(el("p", { class: "note", text: "Sur le téléphone, ouvre la page puis entre ce code :" }));
+  }
+  document.addEventListener("fullscreenchange", () => plein.hidden = !!document.fullscreenElement);
+  const reveil = () => navigator.wakeLock?.request("screen").catch(() => {});
+  reveil();
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reveil(); });
+
+  function rendreStatut() {
+    const [cls, txt] = connexion === "ok" ? ["ok", "En direct"] : connexion === "refus" ? ["ko", "Accès refusé : vérifie les règles Firebase"] : connexion === "attente" ? ["att", "Connexion…"] : ["ko", "Reconnexion…"];
+    statut.replaceChildren(el("span", { class: "point " + cls }), txt);
+  }
+  function hauteurs(n) {
+    n = Math.max(n, 1);
+    const ecart = Math.max(6, Math.round(innerHeight * 0.012));
+    const dispo = liste.parentElement.clientHeight;
+    const h = Math.max(40, Math.min((dispo - ecart * (n - 1)) / n, innerHeight * 0.16));
+    liste.style.setProperty("--ecart", ecart + "px");
+    liste.style.setProperty("--h", Math.floor(h) + "px");
+  }
+  function animerScore(span, de, a) {
+    if (reduit || de === a) { span.textContent = a; return; }
+    const t0 = performance.now(), duree = 650;
+    const pas = t => {
+      const k = Math.min(1, (t - t0) / duree), e = 1 - Math.pow(1 - k, 3);
+      span.textContent = Math.round(de + (a - de) * e);
+      if (k < 1) requestAnimationFrame(pas);
+    };
+    requestAnimationFrame(pas);
+  }
+  function envol(l, d) {
+    if (reduit) return;
+    const f = el("span", { class: "envol " + (d > 0 ? "plus" : "moins"), text: signe(d) });
+    f.addEventListener("animationend", () => f.remove());
+    l.append(f);
+  }
+  function rendre(arbre, direct) {
+    const etat = lireEtat(arbre);
+    document.title = etat.titre === "Classement" ? "Classement" : etat.titre + " · Classement";
+    h1.textContent = etat.titre;
+    const tri = classer(etat.equipes);
+    const max = Math.max(1, ...tri.map(x => x.score));
+    vide.hidden = tri.length > 0; liste.hidden = tri.length === 0;
+    const ordre = tri.map(x => x.id).join();
+    const animer = direct && !reduit && ordre !== dernierOrdre;
+    dernierOrdre = ordre;
+    const avant = new Map();
+    if (animer) for (const [id, l] of lignes) avant.set(id, l.getBoundingClientRect().top);
+    for (const [id, l] of lignes) if (!tri.some(x => x.id === id)) { l.remove(); lignes.delete(id); }
+    hauteurs(tri.length);
+    for (const x of tri) {
+      let l = lignes.get(x.id);
+      if (!l) {
+        l = el("div", { class: "equipe" }, el("div", { class: "barre" }), el("div", { class: "rang" }), el("div", { class: "nom" }), el("div", { class: "score num" }));
+        l._score = x.score; l.querySelector(".score").textContent = x.score;
+        lignes.set(x.id, l);
+      }
+      l.style.setProperty("--c", PALETTE[x.co]);
+      l.classList.toggle("tete", x.rang === 1 && x.score > 0);
+      const [n, s] = ordinal(x.rang);
+      l.querySelector(".rang").replaceChildren(n, el("sup", { text: s }));
+      l.querySelector(".nom").textContent = x.nom;
+      l.querySelector(".barre").style.width = (x.score > 0 ? (x.score / max) * 100 : 0) + "%";
+      if (l._score !== x.score) {
+        if (direct) envol(l, x.score - l._score);
+        animerScore(l.querySelector(".score"), l._score, x.score);
+        l._score = x.score;
+      }
+      liste.append(l);
+    }
+    if (animer) for (const [id, l] of lignes) {
+      const a = avant.get(id); if (a == null) continue;
+      const dy = a - l.getBoundingClientRect().top;
+      if (Math.abs(dy) > 1) l.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 650, easing: "cubic-bezier(.2,.8,.2,1)" });
+    }
+    const equipe = id => etat.equipes.find(x => x.id === id);
+    fil.replaceChildren(...etat.hist.filter(h => !h.x && equipe(h.e)).slice(0, 6).map(h => el("li", {},
+      el("span", { class: "delta num", text: signe(h.d), style: `color:${h.d > 0 ? "var(--ok)" : "var(--alerte)"}` }),
+      el("span", { class: "qui", text: equipe(h.e).nom }),
+      el("span", { class: "heure num", text: heure(h.ts) }))));
+    if (!fil.children.length) fil.append(el("li", { class: "note", text: "Rien pour l'instant." }));
+    rendreStatut();
+    // L'écran fait le ménage dans l'historique (on garde les 30 dernières actions)
+    if (connexion === "ok" && !nettoyage && etat.hist.length > GARDER_HIST + 10) {
+      nettoyage = true;
+      const maj = {};
+      for (const h of etat.hist.slice(GARDER_HIST)) maj["hist/" + h.c] = null;
+      salle.modifier(maj).catch(() => {}).finally(() => nettoyage = false);
+    }
+  }
+
+  const salle = creerSalle(code, rendre, s => { connexion = s; rendreStatut(); });
+  rendre(salle.arbre, false);
+  addEventListener("resize", () => hauteurs(lignes.size));
+  salle.connecter();
+  // Signal « écran ouvert » pour les télécommandes
+  const signal = () => salle.modifier({ ecran: { ".sv": "timestamp" } }).catch(() => {});
+  signal(); setInterval(signal, 30000);
+}
+
+/* ============================================================
+   TÉLÉCOMMANDE
+   ============================================================ */
+function lancerTele(code) {
+  stock("derniere-salle", { code: normCode(code), vue: "telecommande" });
+  const tampon = new Map();  // appuis rapprochés regroupés par équipe
+  let connexion = "attente", onglet = "points", etat = lireEtat(null);
+  const cartes = new Map();
+
+  const h1 = el("h1"), statut = el("div", { class: "statut" });
+  const bPoints = el("button", { role: "tab", text: "Points", onclick: () => choisir("points") });
+  const bReglages = el("button", { role: "tab", text: "Réglages", onclick: () => choisir("reglages") });
+  const vuePoints = el("section", { class: "reglage" });
+  const zoneCartes = el("div", { class: "cartes" });
+  const videPoints = el("div", { class: "carte" },
+    el("strong", { text: "Aucune équipe pour l'instant" }),
+    el("p", { class: "note", text: "Ajoute les équipes dans l'onglet Réglages. Elles apparaîtront aussitôt sur l'écran." }),
+    el("button", { class: "bouton principal", text: "Ajouter des équipes", onclick: () => choisir("reglages") }));
+  const histo = el("ul", { class: "histo" });
+  vuePoints.append(videPoints, zoneCartes, el("div", { class: "section-titre" }, el("span", { class: "etiquette", text: "Dernières actions" })), histo);
+  const vueReglages = el("section", { class: "reglage", hidden: "" });
+
+  $("#app").replaceChildren(el("main", { class: "tele" },
+    el("header", { class: "tele-tete" }, el("span", { class: "etiquette", text: "Télécommande · " + joliCode(code) }), h1, statut),
+    el("nav", { class: "onglets", role: "tablist" }, bPoints, bReglages),
+    vuePoints, vueReglages));
+
+  function rendreStatut() {
+    let cls, txt;
+    if (connexion === "refus") { cls = "ko"; txt = "Accès refusé : vérifie les règles Firebase"; }
+    else if (connexion === "attente") { cls = "att"; txt = "Connexion…"; }
+    else if (connexion !== "ok") { cls = "ko"; txt = "Hors ligne : reconnexion…"; }
+    else if (etat.ecran && Math.abs(Date.now() - etat.ecran) < 90000) { cls = "ok"; txt = "Connecté · écran ouvert"; }
+    else { cls = "att"; txt = "Connecté · écran fermé (les points sont quand même enregistrés)"; }
+    statut.replaceChildren(el("span", { class: "point " + cls }), txt);
+  }
+  function rendre() {
+    etat = lireEtat(salle.arbre);
+    h1.textContent = etat.titre;
+    document.title = "Télécommande · " + etat.titre;
+    const rangs = new Map(classer(etat.equipes).map(x => [x.id, x.rang]));
+    videPoints.hidden = etat.equipes.length > 0;
+    for (const [id, c] of cartes) if (!etat.equipes.some(x => x.id === id)) { c.remove(); cartes.delete(id); }
+    for (const x of etat.equipes) {
+      let c = cartes.get(x.id);
+      if (!c) {
+        const touche = (d, cls) => el("button", { class: cls, text: signe(d), "aria-label": `${signe(d)} point${Math.abs(d) > 1 ? "s" : ""}`, onclick: () => taper(x.id, d) });
+        c = el("article", { class: "carte" },
+          el("div", { class: "carte-haut" }, el("span", { class: "pastille" }),
+            el("div", { style: "min-width:0" }, el("div", { class: "nom" }), el("div", { class: "rangc" })),
+            el("div", { class: "score num" })),
+          el("div", { class: "touches" }, touche(-1, "moins"), touche(1, "plus"), touche(2, "plus"), touche(5, "plus"), touche(10, "plus"),
+            el("button", { text: "…", "aria-label": "Autre montant", onclick: () => feuille(x.id) })));
+        cartes.set(x.id, c);
+      }
+      const t = tampon.get(x.id)?.d || 0;
+      c.style.setProperty("--c", PALETTE[x.co]);
+      $(".nom", c).textContent = x.nom;
+      const [n, s] = ordinal(rangs.get(x.id));
+      $(".rangc", c).textContent = `${n}${s} · ${NOMS_COULEURS[x.co]}`;
+      const sc = $(".score", c); sc.textContent = x.score + t; sc.classList.toggle("envoi", t !== 0);
+      zoneCartes.append(c);
+    }
+    const equipe = id => etat.equipes.find(x => x.id === id);
+    histo.replaceChildren(...etat.hist.filter(h => equipe(h.e)).slice(0, 10).map(h => el("li", {},
+      el("span", { class: "delta num" + (h.x ? " annule" : ""), text: signe(h.d), style: `color:${h.d > 0 ? "var(--ok)" : "var(--alerte)"}` }),
+      el("span", { class: "qui" + (h.x ? " annule" : ""), text: equipe(h.e).nom }),
+      el("span", { class: "note num", text: heure(h.ts) }),
+      h.x ? el("span", { class: "note", text: "annulé" }) : el("button", { text: "Annuler", onclick: () => annuler(h) }))));
+    if (!histo.children.length) histo.append(el("li", { class: "note", text: "Les points ajoutés s'afficheront ici." }));
+    if (onglet === "reglages") rendreReglages();
+    rendreStatut();
+  }
+  function choisir(o) {
+    onglet = o;
+    bPoints.setAttribute("aria-selected", o === "points"); bReglages.setAttribute("aria-selected", o === "reglages");
+    vuePoints.hidden = o !== "points"; vueReglages.hidden = o !== "reglages";
+    rendre();
+  }
+
+  /* ----- Actions ----- */
+  const scoreDe = id => etat.equipes.find(x => x.id === id)?.score ?? 0;
+  function ecrire(maj, optimiste) { salle.modifier(maj, optimiste).catch(e => toast(messageErreur(e))); }
+  function points(id, d) {
+    const k = cleTemps(), h = { e: id, d, ts: Date.now() };
+    ecrire({ [`equipes/${id}/score`]: inc(d), [`hist/${k}`]: h },
+      { [`equipes/${id}/score`]: scoreDe(id) + d, [`hist/${k}`]: h });
+  }
+  function annuler(h) {
+    ecrire({ [`equipes/${h.e}/score`]: inc(-h.d), [`hist/${h.c}/x`]: 1 },
+      { [`equipes/${h.e}/score`]: scoreDe(h.e) - h.d, [`hist/${h.c}/x`]: 1 });
+  }
+  function taper(id, d) {
+    navigator.vibrate?.(8);
+    const t = tampon.get(id) || { d: 0 };
+    t.d += d; clearTimeout(t.minuteur);
+    t.minuteur = setTimeout(() => { tampon.delete(id); if (t.d) points(id, t.d); else rendre(); }, 600);
+    tampon.set(id, t);
+    rendre();
+  }
+
+  /* ----- Réglages : reconstruits seulement si rien n'est en cours de saisie ----- */
+  let signatureReglages = "";
+  function rendreReglages() {
+    if (vueReglages.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+    const sig = JSON.stringify([etat.titre, etat.equipes.map(x => [x.id, x.nom, x.co])]);
+    if (sig === signatureReglages && vueReglages.childElementCount) return;
+    signatureReglages = sig;
+    const titre = el("input", { class: "champ", id: "titre", value: etat.titre, maxlength: "60" });
+    const prises = new Set(etat.equipes.map(x => x.co));
+    let coNouvelle = PALETTE.findIndex((_, i) => !prises.has(i)); if (coNouvelle < 0) coNouvelle = 0;
+    const nomNouvelle = el("input", { class: "champ", id: "nouvelle-equipe", placeholder: "Nom de l'équipe", maxlength: "32" });
+    const ajouter = () => {
+      const nom = nomNouvelle.value.trim();
+      if (!nom) { toast("Donne un nom à l'équipe."); nomNouvelle.focus(); return; }
+      if (etat.equipes.length >= MAX_EQUIPES) { toast(`${MAX_EQUIPES} équipes au maximum.`); return; }
+      const id = aleatoire(8), q = { nom, co: coNouvelle, score: 0, ordre: Date.now() };
+      nomNouvelle.value = ""; nomNouvelle.blur(); signatureReglages = "";
+      ecrire({ [`equipes/${id}`]: q }, { [`equipes/${id}`]: q });
+    };
+    nomNouvelle.addEventListener("keydown", e => { if (e.key === "Enter") ajouter(); });
+
+    const reset = el("div", { class: "confirm" });
+    const boutonReset = () => reset.replaceChildren(el("button", { class: "bouton danger", text: "Remettre tous les scores à zéro", onclick: () =>
+      reset.replaceChildren(el("span", { text: "Tous les scores repartent de 0 et l'historique est effacé. Sûr ?" }),
+        el("button", { class: "bouton danger", text: "Oui, remettre à zéro", onclick: () => {
+          const maj = { hist: null };
+          for (const x of etat.equipes) maj[`equipes/${x.id}/score`] = 0;
+          ecrire(maj, maj); boutonReset();
+        } }),
+        el("button", { class: "bouton", text: "Non", onclick: boutonReset })) }));
+    boutonReset();
+
+    vueReglages.replaceChildren(
+      el("div", { class: "bloc" },
+        el("label", { class: "etiquette", for: "titre", text: "Titre affiché sur l'écran" }), titre,
+        el("button", { class: "bouton", text: "Enregistrer le titre", onclick: () => {
+          const t = titre.value.trim().slice(0, 60);
+          titre.blur(); signatureReglages = "";
+          if (t && t !== etat.titre) ecrire({ titre: t }, { titre: t });
+        } })),
+      el("div", { class: "bloc" },
+        el("label", { class: "etiquette", for: "nouvelle-equipe", text: "Ajouter une équipe" }), nomNouvelle,
+        selecteur(coNouvelle, i => coNouvelle = i),
+        el("button", { class: "bouton principal", text: "Ajouter l'équipe", onclick: ajouter })),
+      el("span", { class: "etiquette", text: `Équipes (${etat.equipes.length})` }),
+      ...etat.equipes.map(ligneEquipe),
+      el("div", { class: "bloc" }, el("span", { class: "etiquette", text: "Partie" }), reset,
+        el("p", { class: "note", text: "Adresse de l'écran (à ouvrir sur l'ordinateur d'affichage) :" }),
+        el("div", { class: "lien", text: urlVue(code, "ecran") }),
+        el("button", { class: "bouton", text: "Changer de salle", onclick: () => location.href = location.pathname })));
+  }
+  function selecteur(actuel, surChoix) {
+    const boite = el("div", { class: "couleurs", role: "group", "aria-label": "Couleur" });
+    PALETTE.forEach((c, i) => boite.append(el("button", { style: `--c:${c}`, "aria-label": NOMS_COULEURS[i], "aria-pressed": i === actuel, onclick: () => {
+      boite.querySelectorAll("button").forEach((b, j) => b.setAttribute("aria-pressed", j === i)); surChoix(i);
+    } })));
+    return boite;
+  }
+  function ligneEquipe(x) {
+    const nom = el("input", { class: "champ", value: x.nom, maxlength: "32", "aria-label": "Nom de l'équipe" });
+    nom.addEventListener("change", () => {
+      const n = nom.value.trim().slice(0, 32);
+      signatureReglages = "";
+      if (n && n !== x.nom) ecrire({ [`equipes/${x.id}/nom`]: n }, { [`equipes/${x.id}/nom`]: n });
+    });
+    nom.addEventListener("keydown", e => { if (e.key === "Enter") nom.blur(); });
+    const zone = el("div", { class: "confirm" });
+    const boutonSuppr = () => zone.replaceChildren(el("button", { class: "bouton danger", text: "Supprimer", onclick: () =>
+      zone.replaceChildren(el("span", { text: `Supprimer « ${x.nom} » et son score ?` }),
+        el("button", { class: "bouton danger", text: "Oui, supprimer", onclick: () => {
+          const maj = { [`equipes/${x.id}`]: null };
+          for (const h of etat.hist) if (h.e === x.id) maj["hist/" + h.c] = null;
+          signatureReglages = "";
+          ecrire(maj, maj);
+        } }),
+        el("button", { class: "bouton", text: "Non", onclick: boutonSuppr })) }));
+    boutonSuppr();
+    return el("div", { class: "equipe-edit" },
+      el("div", { class: "ligne1" }, nom),
+      selecteur(x.co, i => { signatureReglages = ""; ecrire({ [`equipes/${x.id}/co`]: i }, { [`equipes/${x.id}/co`]: i }); }),
+      zone);
+  }
+
+  /* ----- Montant libre ----- */
+  function feuille(id) {
+    const x = etat.equipes.find(q => q.id === id); if (!x) return;
+    const champ = el("input", { class: "champ num", id: "montant", type: "number", inputmode: "numeric", min: "1", step: "1", placeholder: "0" });
+    const fermer = () => fond.remove();
+    const valider = s => {
+      const n = Math.round(Math.abs(Number(champ.value)));
+      if (!n || n > 100000) { toast("Entre un nombre de points entre 1 et 100 000."); champ.focus(); return; }
+      points(id, s * n); fermer();
+    };
+    const fond = el("div", { class: "feuille-fond", onclick: e => { if (e.target === fond) fermer(); } },
+      el("div", { class: "feuille", role: "dialog", "aria-label": "Autre montant" },
+        el("h2", { text: x.nom }), el("label", { class: "etiquette", for: "montant", text: "Nombre de points" }), champ,
+        el("div", { class: "rangee" },
+          el("button", { class: "bouton danger", text: "Retirer", onclick: () => valider(-1) }),
+          el("button", { class: "bouton principal", text: "Ajouter", onclick: () => valider(1) })),
+        el("button", { class: "bouton", text: "Fermer", onclick: fermer })));
+    document.body.append(fond);
+    champ.focus();
+  }
+
+  const salle = creerSalle(code, () => rendre(), s => { connexion = s; rendreStatut(); });
+  choisir("points");
+  setInterval(rendreStatut, 10000);
+  salle.connecter();
+}
+
+/* ---------- Routage ---------- */
+const salleDemandee = normCode(params.get("salle"));
+const vueDemandee = params.get("vue");
+if (BASE && salleDemandee.length === 16 && vueDemandee === "ecran") lancerEcran(salleDemandee);
+else if (BASE && salleDemandee.length === 16 && vueDemandee === "telecommande") lancerTele(salleDemandee);
+else lancerAccueil();
+</script>
+</body>
+</html>
