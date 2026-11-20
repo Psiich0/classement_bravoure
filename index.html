@@ -59,7 +59,14 @@ button{cursor:pointer}
 .equipe{background:linear-gradient(90deg,var(--c),color-mix(in srgb,var(--c) 82%,#000));color:var(--t,#fff);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
 .equipe .rang{font:800 1.15em/1 var(--f-titre);color:var(--t,#fff);opacity:.75;text-align:center}
 .equipe .rang sup{font-size:.5em;vertical-align:.7em;margin-left:.05em}
-.equipe .nom{font:700 .9em/1.3 var(--f-texte);padding-block:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.equipe .nom{font:700 .9em/1.3 var(--f-texte);display:flex;align-items:center;gap:.3em;min-width:0}
+.nom-texte{padding-block:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* Flamme : équipe qui marque vite (réglage X points en Y minutes) */
+.flamme{flex:none;line-height:1;font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif;display:inline-block;transform-origin:50% 90%;animation:flamme 1.1s ease-in-out infinite alternate}
+/* Flèche d'évolution du classement (places gagnées ▲ ou perdues ▼ sur la période réglée) */
+.fleche{flex:none;font:800 .62em/1 var(--f-titre);font-variant-numeric:tabular-nums;padding:.18em .4em;border-radius:999px;background:color-mix(in srgb,var(--t,#fff) 20%,transparent);color:var(--t,#fff);letter-spacing:.02em}
+.fleche.bas{background:transparent;box-shadow:inset 0 0 0 .1em color-mix(in srgb,var(--t,#fff) 45%,transparent)}
+@keyframes flamme{from{transform:scale(1) rotate(-4deg)}to{transform:scale(1.12) rotate(4deg)}}
 .equipe .score{font:800 1.5em/1 var(--f-titre);font-variant-numeric:tabular-nums;text-align:right;min-width:2ch}
 .equipe.tete{outline:3px solid var(--or);outline-offset:-3px}
 .equipe.tete .rang{opacity:1}
@@ -93,7 +100,11 @@ button{cursor:pointer}
 .carte{background:var(--surface);border:1px solid var(--ligne);border-radius:14px;padding:12px;display:grid;gap:10px}
 .carte-haut{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center}
 .pastille{width:14px;height:14px;border-radius:50%;background:var(--c)}
-.carte .nom{font-weight:700;font-size:1.1rem;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.case{display:flex;gap:10px;align-items:center;font-size:.95rem}
+.case input{width:20px;height:20px;accent-color:var(--or);flex:none}
+.flamme-regle{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:.95rem}
+.flamme-regle .champ{width:6em}
+.carte .nom{font-weight:700;font-size:1.1rem;line-height:1.35;display:flex;align-items:center;gap:.3em;min-width:0}
 .carte .rangc{color:var(--doux);font-size:.85rem;font-weight:500}
 .carte .score{font:800 2rem/1 var(--f-titre);font-variant-numeric:tabular-nums}
 .carte .score.envoi{color:var(--attente)}
@@ -144,7 +155,7 @@ button{cursor:pointer}
 .feuille h2{margin:0;font:700 1.4rem/1.1 var(--f-titre);text-transform:uppercase}
 .feuille .champ{font:800 2rem/1 var(--f-titre);text-align:center}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--ligne);padding:.7em 1em;border-radius:10px;z-index:30;max-width:calc(100% - 32px);font-size:.95rem}
-@media (prefers-reduced-motion:reduce){.envol{animation-duration:.01s}}
+@media (prefers-reduced-motion:reduce){.envol{animation-duration:.01s}.flamme{animation:none}}
 </style>
 </head>
 <body>
@@ -307,6 +318,44 @@ function messageConnexion(code) {
 const pageHebergee = () => location.protocol === "https:" || location.protocol === "http:";
 
 /* ---------- Lecture de l'arbre de la salle (données non fiables : on valide) ---------- */
+const entierBorne = (v, min, max, defaut) => Number.isInteger(v) && v >= min && v <= max ? v : defaut;
+// Équipes « en feu » : au moins X points nets (annulations exclues) marqués dans les Y dernières minutes
+function equipesEnFeu(etat, maintenant = Date.now()) {
+  const f = etat.options.flamme;
+  if (!f.actif) return new Set();
+  const debut = maintenant - f.minutes * 60000, total = new Map();
+  for (const h of etat.hist) {
+    if (h.x || h.ts < debut) continue;
+    total.set(h.e, (total.get(h.e) || 0) + h.d);
+  }
+  return new Set([...total].filter(([, v]) => v >= f.points).map(([e]) => e));
+}
+// Évolution du classement : places gagnées (+) ou perdues (−) depuis Y minutes.
+// Le classement passé est reconstitué en retirant aux scores les points marqués depuis (annulations exclues).
+// Une équipe créée pendant la fenêtre n'a pas de position passée : pas de flèche.
+function evolutionsPositions(etat, maintenant = Date.now()) {
+  const evo = new Map(), p = etat.options.positions;
+  if (!p.actif) return evo;
+  const debut = maintenant - p.minutes * 60000, recent = new Map();
+  for (const h of etat.hist) if (!h.x && h.ts >= debut) recent.set(h.e, (recent.get(h.e) || 0) + h.d);
+  const anciennes = etat.equipes.filter(x => x.ordre <= debut);
+  const rangAvant = new Map(classer(anciennes.map(x => ({ ...x, score: x.score - (recent.get(x.id) || 0) }))).map(x => [x.id, x.rang]));
+  const rangMaintenant = new Map(classer(etat.equipes.map(x => ({ ...x }))).map(x => [x.id, x.rang]));
+  for (const x of anciennes) {
+    const d = rangAvant.get(x.id) - rangMaintenant.get(x.id);
+    if (d) evo.set(x.id, d);
+  }
+  return evo;
+}
+function majFleche(span, d) {
+  span.hidden = !d;
+  if (!d) return;
+  span.textContent = (d > 0 ? "▲" : "▼") + Math.abs(d);
+  span.className = "fleche " + (d > 0 ? "haut" : "bas");
+  const n = Math.abs(d), places = n > 1 ? "places" : "place";
+  span.title = d > 0 ? `Gagne ${n} ${places}` : `Perd ${n} ${places}`;
+  span.setAttribute("aria-label", span.title);
+}
 function lireEtat(a) {
   a = a && typeof a === "object" ? a : {};
   const equipes = Object.entries(a.equipes && typeof a.equipes === "object" ? a.equipes : {})
@@ -328,7 +377,15 @@ function lireEtat(a) {
         .sort((x, y) => x.ordre - y.ordre || (x.id < y.id ? -1 : 1))
     }))
     .sort((x, y) => (x.k < y.k ? 1 : -1));
-  return { titre: texte(a.titre, 60) || "Classement", equipes, hist, ecran: Number(a.ecran) || 0, sauvegardes };
+  const fl = a.options && typeof a.options === "object" ? a.options.flamme : null;
+  const flamme = fl && typeof fl === "object"
+    ? { actif: fl.actif === true, points: entierBorne(fl.points, 1, 100000, 10), minutes: entierBorne(fl.minutes, 1, 1440, 5) }
+    : { actif: false, points: 10, minutes: 5 };
+  const po = a.options && typeof a.options === "object" ? a.options.positions : null;
+  const positions = po && typeof po === "object"
+    ? { actif: po.actif === true, minutes: entierBorne(po.minutes, 1, 1440, 5) }
+    : { actif: false, minutes: 5 };
+  return { titre: texte(a.titre, 60) || "Classement", equipes, hist, ecran: Number(a.ecran) || 0, sauvegardes, options: { flamme, positions } };
 }
 
 /* ---------- Sauvegardes : copies des scores gardées dans la base, sous /sauvegardes ---------- */
@@ -537,6 +594,7 @@ function lancerEcran(code) {
   }
   function rendre(arbre, direct) {
     const etat = lireEtat(arbre);
+    const feu = equipesEnFeu(etat), evo = evolutionsPositions(etat);
     document.title = etat.titre === "Classement" ? "Classement" : etat.titre + " · Classement";
     h1.textContent = etat.titre;
     const tri = classer(etat.equipes);
@@ -551,7 +609,9 @@ function lancerEcran(code) {
     for (const x of tri) {
       let l = lignes.get(x.id);
       if (!l) {
-        l = el("div", { class: "equipe" }, el("div", { class: "rang" }), el("div", { class: "nom" }), el("div", { class: "score num" }));
+        l = el("div", { class: "equipe" }, el("div", { class: "rang" }),
+          el("div", { class: "nom" }, el("span", { class: "nom-texte" }), el("span", { class: "flamme", "aria-label": "En feu", title: "En feu", hidden: "", text: "🔥" }), el("span", { class: "fleche", hidden: "" })),
+          el("div", { class: "score num" }));
         l._score = x.score; l.querySelector(".score").textContent = x.score;
         lignes.set(x.id, l);
       }
@@ -560,7 +620,9 @@ function lancerEcran(code) {
       l.classList.toggle("tete", x.rang === 1 && x.score > 0);
       const [n, s] = ordinal(x.rang);
       l.querySelector(".rang").replaceChildren(n, el("sup", { text: s }));
-      l.querySelector(".nom").textContent = x.nom;
+      l.querySelector(".nom-texte").textContent = x.nom;
+      l.querySelector(".flamme").hidden = !feu.has(x.id);
+      majFleche(l.querySelector(".fleche"), evo.get(x.id) || 0);
       if (l._score !== x.score) {
         if (direct) envol(l, x.score - l._score);
         animerScore(l.querySelector(".score"), l._score, x.score);
@@ -585,6 +647,7 @@ function lancerEcran(code) {
   const salle = creerSalle(code, rendre, s => { connexion = s; rendreStatut(); });
   rendre(salle.arbre, false);
   addEventListener("resize", () => hauteurs(lignes.size));
+  setInterval(() => rendre(salle.arbre, false), 15000); // la flamme s'éteint d'elle-même quand le rythme retombe
   salle.connecter();
   // Signal « écran ouvert » pour les télécommandes
   const signal = () => salle.modifier({ ecran: { ".sv": "timestamp" } }).catch(() => {});
@@ -660,6 +723,7 @@ function lancerTele(code) {
     h1.textContent = etat.titre;
     document.title = "Télécommande · " + etat.titre;
     const rangs = new Map(classer(etat.equipes).map(x => [x.id, x.rang]));
+    const feu = equipesEnFeu(etat), evo = evolutionsPositions(etat);
     videPoints.hidden = etat.equipes.length > 0;
     for (const [id, c] of cartes) if (!etat.equipes.some(x => x.id === id)) { c.remove(); cartes.delete(id); }
     for (const x of etat.equipes) {
@@ -668,7 +732,9 @@ function lancerTele(code) {
         const touche = (d, cls) => el("button", { class: cls, text: signe(d), "aria-label": `${signe(d)} point${Math.abs(d) > 1 ? "s" : ""}`, onclick: () => taper(x.id, d) });
         c = el("article", { class: "carte carte-equipe" },
           el("div", { class: "carte-haut" }, el("span", { class: "pastille" }),
-            el("div", { style: "min-width:0" }, el("div", { class: "nom" }), el("div", { class: "rangc" })),
+            el("div", { style: "min-width:0" },
+              el("div", { class: "nom" }, el("span", { class: "nom-texte" }), el("span", { class: "flamme", "aria-label": "En feu", title: "En feu", hidden: "", text: "🔥" }), el("span", { class: "fleche", hidden: "" })),
+              el("div", { class: "rangc" })),
             el("div", { class: "score num" })),
           el("div", { class: "touches" }, touche(-1, "moins"), touche(1, "plus"), touche(2, "plus"), touche(3, "plus"), touche(5, "plus"),
             el("button", { text: "…", "aria-label": "Autre montant", onclick: () => feuille(x.id) })));
@@ -677,7 +743,9 @@ function lancerTele(code) {
       const t = tampon.get(x.id)?.d || 0;
       c.style.setProperty("--c", couleur(x.co));
       c.style.setProperty("--t", texteSur(couleur(x.co)));
-      $(".nom", c).textContent = x.nom;
+      $(".nom-texte", c).textContent = x.nom;
+      $(".flamme", c).hidden = !feu.has(x.id);
+      majFleche($(".fleche", c), evo.get(x.id) || 0);
       const [n, s] = ordinal(rangs.get(x.id));
       $(".rangc", c).textContent = `${n}${s} · ${nomCouleur(x.co)}`;
       const sc = $(".score", c); sc.textContent = x.score + t; sc.classList.toggle("envoi", t !== 0);
@@ -744,7 +812,7 @@ function lancerTele(code) {
   let signatureReglages = "";
   function rendreReglages() {
     if (vueReglages.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
-    const sig = JSON.stringify([etat.titre, etat.equipes.map(x => [x.id, x.nom, x.co]), etat.sauvegardes.map(s => s.k)]);
+    const sig = JSON.stringify([etat.titre, etat.equipes.map(x => [x.id, x.nom, x.co]), etat.sauvegardes.map(s => s.k), etat.options]);
     if (sig === signatureReglages && vueReglages.childElementCount) return;
     signatureReglages = sig;
     const titre = el("input", { class: "champ", id: "titre", value: etat.titre, maxlength: "60" });
@@ -800,6 +868,8 @@ function lancerTele(code) {
           titre.blur(); signatureReglages = "";
           if (t && t !== etat.titre) ecrire({ titre: t }, { titre: t });
         } })),
+      blocFlamme(),
+      blocPositions(),
       el("div", { class: "bloc" },
         el("label", { class: "etiquette", for: "nouvelle-equipe", text: "Ajouter une équipe" }), nomNouvelle,
         selecteur(coNouvelle, i => coNouvelle = i),
@@ -876,6 +946,51 @@ function lancerTele(code) {
       zone);
   }
   // 10 couleurs prêtes + une couleur libre (code HEX ou sélecteur du téléphone)
+  // Option « flamme » : équipe qui marque au moins X points en Y minutes
+  function blocFlamme() {
+    const f = etat.options.flamme;
+    const actif = el("input", { type: "checkbox", id: "flamme-actif" });
+    actif.checked = f.actif;
+    const points = el("input", { class: "champ num", id: "flamme-points", type: "number", inputmode: "numeric", min: "1", max: "100000", step: "1", value: String(f.points) });
+    const minutes = el("input", { class: "champ num", id: "flamme-minutes", type: "number", inputmode: "numeric", min: "1", max: "1440", step: "1", value: String(f.minutes) });
+    const enregistrer = () => {
+      const p = Number(points.value), m = Number(minutes.value);
+      if (!Number.isInteger(p) || p < 1 || p > 100000) { toast("Nombre de points : un entier entre 1 et 100 000."); points.focus(); return; }
+      if (!Number.isInteger(m) || m < 1 || m > 1440) { toast("Durée : un nombre de minutes entre 1 et 1 440."); minutes.focus(); return; }
+      const v = { actif: actif.checked, points: p, minutes: m };
+      document.activeElement?.blur?.(); signatureReglages = "";
+      ecrire({ "options/flamme": v }, { "options/flamme": v });
+      toast(v.actif ? `Flamme activée : ${p} points en ${m} min.` : "Flamme désactivée.");
+    };
+    return el("div", { class: "bloc" },
+      el("span", { class: "etiquette", text: "Flamme 🔥" }),
+      el("label", { class: "case", for: "flamme-actif" }, actif, "Afficher une flamme à côté des équipes qui marquent vite"),
+      el("div", { class: "flamme-regle" },
+        el("label", { for: "flamme-points", text: "Au moins" }), points,
+        el("label", { for: "flamme-minutes", text: "points en" }), minutes, el("span", { text: "min" })),
+      el("button", { class: "bouton", text: "Enregistrer", onclick: enregistrer }));
+  }
+  // Option « évolution du classement » : flèches ▲/▼ selon les places gagnées ou perdues depuis Y minutes
+  function blocPositions() {
+    const p = etat.options.positions;
+    const actif = el("input", { type: "checkbox", id: "positions-actif" });
+    actif.checked = p.actif;
+    const minutes = el("input", { class: "champ num", id: "positions-minutes", type: "number", inputmode: "numeric", min: "1", max: "1440", step: "1", value: String(p.minutes) });
+    const enregistrer = () => {
+      const m = Number(minutes.value);
+      if (!Number.isInteger(m) || m < 1 || m > 1440) { toast("Durée : un nombre de minutes entre 1 et 1 440."); minutes.focus(); return; }
+      const v = { actif: actif.checked, minutes: m };
+      document.activeElement?.blur?.(); signatureReglages = "";
+      ecrire({ "options/positions": v }, { "options/positions": v });
+      toast(v.actif ? `Flèches activées : évolution sur ${m} min.` : "Flèches désactivées.");
+    };
+    return el("div", { class: "bloc" },
+      el("span", { class: "etiquette", text: "Évolution du classement ▲▼" }),
+      el("label", { class: "case", for: "positions-actif" }, actif, "Afficher les places gagnées ou perdues à côté du nom"),
+      el("div", { class: "flamme-regle" },
+        el("label", { for: "positions-minutes", text: "Sur les" }), minutes, el("span", { text: "dernières minutes" })),
+      el("button", { class: "bouton", text: "Enregistrer", onclick: enregistrer }));
+  }
   function selecteur(actuel, surChoix) {
     const boite = el("div", { class: "couleurs", role: "group", "aria-label": "Couleur" });
     const pastilles = PALETTE.map((c, i) => el("button", { type: "button", style: `--c:${c}`, "aria-label": NOMS_COULEURS[i], "aria-pressed": i === actuel, onclick: () => choisirCo(i) }));
@@ -950,6 +1065,7 @@ function lancerTele(code) {
   choisir("points");
   majMode();
   setInterval(rendreStatut, 10000);
+  setInterval(rendre, 15000); // la flamme s'éteint d'elle-même quand le rythme retombe
   setInterval(sauvegardeAuto, 60000);
   salle.connecter();
 }
