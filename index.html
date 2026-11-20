@@ -64,7 +64,9 @@ button{cursor:pointer}
 /* Flamme : équipe qui marque vite (réglage X points en Y minutes) */
 .flamme{flex:none;line-height:1;font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif;display:inline-block;transform-origin:50% 90%;animation:flamme 1.1s ease-in-out infinite alternate}
 /* Flèche d'évolution du classement (places gagnées ▲ ou perdues ▼ sur la période réglée) */
-.fleche{flex:none;font:800 .62em/1 var(--f-titre);font-variant-numeric:tabular-nums;padding:.18em .4em;border-radius:999px;background:color-mix(in srgb,var(--t,#fff) 20%,transparent);color:var(--t,#fff);letter-spacing:.02em}
+.fleche{flex:none;display:inline-flex;align-items:center;gap:.12em;font:800 .62em/1 var(--f-titre);font-variant-numeric:tabular-nums;padding:.18em .45em .18em .3em;border-radius:999px;background:color-mix(in srgb,var(--t,#fff) 20%,transparent);color:var(--t,#fff);letter-spacing:.02em}
+.fleche svg{width:.75em;height:1em;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}
+.fleche.bas svg{transform:rotate(180deg)}
 .fleche.bas{background:transparent;box-shadow:inset 0 0 0 .1em color-mix(in srgb,var(--t,#fff) 45%,transparent)}
 @keyframes flamme{from{transform:scale(1) rotate(-4deg)}to{transform:scale(1.12) rotate(4deg)}}
 .equipe .score{font:800 1.5em/1 var(--f-titre);font-variant-numeric:tabular-nums;text-align:right;min-width:2ch}
@@ -339,18 +341,34 @@ function evolutionsPositions(etat, maintenant = Date.now()) {
   const debut = maintenant - p.minutes * 60000, recent = new Map();
   for (const h of etat.hist) if (!h.x && h.ts >= debut) recent.set(h.e, (recent.get(h.e) || 0) + h.d);
   const anciennes = etat.equipes.filter(x => x.ordre <= debut);
-  const rangAvant = new Map(classer(anciennes.map(x => ({ ...x, score: x.score - (recent.get(x.id) || 0) }))).map(x => [x.id, x.rang]));
-  const rangMaintenant = new Map(classer(etat.equipes.map(x => ({ ...x }))).map(x => [x.id, x.rang]));
+  // Les égalités sont comptées de deux façons : équipes strictement devant (« devant ») et équipes devant
+  // ou à égalité (« auCoude »). Une équipe monte (↑) si elle progresse selon l'une sans reculer selon l'autre :
+  // sortir d'une égalité par le haut, ou rejoindre l'équipe de devant. Elle ne descend (↓) que si elle recule
+  // selon les deux, c'est-à-dire si elle est réellement dépassée (être rejoint n'est pas un recul).
+  // Sans égalité, les deux comptes donnent le rang habituel.
+  const comptes = liste => new Map(liste.map(x => [x.id, {
+    devant: liste.filter(y => y.score > x.score).length,
+    auCoude: liste.filter(y => y.score >= x.score).length }]));
+  const avant = comptes(anciennes.map(x => ({ id: x.id, score: x.score - (recent.get(x.id) || 0) })));
+  const apres = comptes(etat.equipes);
   for (const x of anciennes) {
-    const d = rangAvant.get(x.id) - rangMaintenant.get(x.id);
-    if (d) evo.set(x.id, d);
+    const a = avant.get(x.id), b = apres.get(x.id);
+    const d1 = a.devant - b.devant, d2 = a.auCoude - b.auCoude;
+    if (d1 >= 0 && d2 >= 0 && (d1 || d2)) evo.set(x.id, Math.max(d1, d2));
+    else if (d1 < 0 && d2 < 0) evo.set(x.id, Math.max(d1, d2));
+    else if (d1 + d2 > 0) evo.set(x.id, d1 + d2); // cas mixte (sorti d'une égalité mais devancé par une autre) : bilan positif
   }
   return evo;
 }
 function majFleche(span, d) {
   span.hidden = !d;
   if (!d) return;
-  span.textContent = (d > 0 ? "▲" : "▼") + Math.abs(d);
+  // Vraie flèche (tige + pointe) en SVG ; la flèche vers le bas est la même, retournée par le CSS
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg"), trait = document.createElementNS(ns, "path");
+  svg.setAttribute("viewBox", "0 0 12 16"); svg.setAttribute("aria-hidden", "true");
+  trait.setAttribute("d", "M6 14.5V2M1.5 6.5 6 2l4.5 4.5");
+  svg.append(trait);
+  span.replaceChildren(svg, String(Math.abs(d)));
   span.className = "fleche " + (d > 0 ? "haut" : "bas");
   const n = Math.abs(d), places = n > 1 ? "places" : "place";
   span.title = d > 0 ? `Gagne ${n} ${places}` : `Perd ${n} ${places}`;
@@ -985,7 +1003,7 @@ function lancerTele(code) {
       toast(v.actif ? `Flèches activées : évolution sur ${m} min.` : "Flèches désactivées.");
     };
     return el("div", { class: "bloc" },
-      el("span", { class: "etiquette", text: "Évolution du classement ▲▼" }),
+      el("span", { class: "etiquette", text: "Évolution du classement ↑↓" }),
       el("label", { class: "case", for: "positions-actif" }, actif, "Afficher les places gagnées ou perdues à côté du nom"),
       el("div", { class: "flamme-regle" },
         el("label", { for: "positions-minutes", text: "Sur les" }), minutes, el("span", { text: "dernières minutes" })),
