@@ -55,16 +55,16 @@ button{cursor:pointer}
 .liste{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--ecart,10px);position:relative}
 .equipe{position:relative;height:var(--h,80px);flex:0 0 auto;border-radius:12px;background:var(--surface);overflow:hidden;
   display:grid;grid-template-columns:2.2em minmax(0,1fr) auto;align-items:center;gap:.6em;padding:0 .7em;font-size:clamp(12px,calc(var(--h,80px) * .4),64px)}
-.equipe .barre{position:absolute;inset:0 auto 0 0;width:0;background:color-mix(in srgb,var(--c) 30%,transparent);border-right:3px solid var(--c);transition:width .7s cubic-bezier(.2,.8,.2,1)}
-.equipe>*:not(.barre){position:relative}
-.equipe .rang{font:800 1.15em/1 var(--f-titre);color:var(--doux);text-align:center}
+/* Bannière entièrement à la couleur de l'équipe ; --t = texte lisible (clair ou foncé) calculé en JS */
+.equipe{background:linear-gradient(90deg,var(--c),color-mix(in srgb,var(--c) 82%,#000));color:var(--t,#fff);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.equipe .rang{font:800 1.15em/1 var(--f-titre);color:var(--t,#fff);opacity:.75;text-align:center}
 .equipe .rang sup{font-size:.5em;vertical-align:.7em;margin-left:.05em}
 .equipe .nom{font:700 .9em/1.05 var(--f-texte);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .equipe .score{font:800 1.5em/1 var(--f-titre);font-variant-numeric:tabular-nums;text-align:right;min-width:2ch}
-.equipe.tete{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--or) 70%,transparent)}
-.equipe.tete .rang{color:var(--or)}
+.equipe.tete{outline:3px solid var(--or);outline-offset:-3px}
+.equipe.tete .rang{opacity:1}
 .envol{position:absolute;right:3.2em;top:50%;font:800 .9em/1 var(--f-titre);pointer-events:none;animation:envol 1.6s ease-out forwards;font-variant-numeric:tabular-nums}
-.envol.plus{color:var(--ok)} .envol.moins{color:var(--alerte)}
+.envol{color:var(--t,#fff)}
 @keyframes envol{0%{opacity:0;transform:translateY(-30%) scale(.7)}15%{opacity:1;transform:translateY(-50%) scale(1.1)}100%{opacity:0;transform:translateY(-160%) scale(1)}}
 .vide{flex:1;display:grid;place-items:center;text-align:center;color:var(--doux);font-size:clamp(1rem,2.6vh,1.6rem);border:2px dashed var(--ligne);border-radius:16px;padding:4vh 2vw}
 .vide strong{display:block;color:var(--texte);font:700 1.6em/1.1 var(--f-titre);text-transform:uppercase;margin-bottom:.4em}
@@ -103,6 +103,14 @@ button{cursor:pointer}
 .touches .moins{color:var(--alerte)}
 .touches .plus{color:var(--ok)}
 .lecture .touches,.lecture .histo button,.lecture .carte>.bouton{display:none}
+/* Carte d'équipe remplie de sa couleur ; --t = texte lisible (clair ou foncé) */
+.carte-equipe{background:linear-gradient(135deg,var(--c),color-mix(in srgb,var(--c) 82%,#000));border-color:transparent;color:var(--t,#fff);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.carte-equipe .carte-haut{grid-template-columns:minmax(0,1fr) auto}
+.carte-equipe .pastille{display:none}
+.carte-equipe .rangc{color:var(--t,#fff);opacity:.75}
+.carte-equipe .score.envoi{color:var(--t,#fff);opacity:.6}
+.carte-equipe .touches button{background:color-mix(in srgb,var(--t,#fff) 14%,transparent);border-color:color-mix(in srgb,var(--t,#fff) 30%,transparent);color:var(--t,#fff)}
+.carte-equipe .touches button:active{background:color-mix(in srgb,var(--t,#fff) 28%,transparent)}
 .section-titre{display:flex;justify-content:space-between;align-items:baseline;margin-top:6px}
 .histo{display:grid;gap:6px;margin:0;padding:0;list-style:none}
 .histo li{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--surface);border-radius:10px;font-size:.95rem}
@@ -136,7 +144,7 @@ button{cursor:pointer}
 .feuille h2{margin:0;font:700 1.4rem/1.1 var(--f-titre);text-transform:uppercase}
 .feuille .champ{font:800 2rem/1 var(--f-titre);text-align:center}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--ligne);padding:.7em 1em;border-radius:10px;z-index:30;max-width:calc(100% - 32px);font-size:.95rem}
-@media (prefers-reduced-motion:reduce){.equipe .barre{transition:none}.envol{animation-duration:.01s}}
+@media (prefers-reduced-motion:reduce){.envol{animation-duration:.01s}}
 </style>
 </head>
 <body>
@@ -209,6 +217,13 @@ const estId = v => typeof v === "string" && /^[a-z0-9]{1,16}$/.test(v);
 const estHex = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v);
 const estCouleur = v => (Number.isInteger(v) && v >= 0 && v < PALETTE.length) || estHex(v);
 const couleur = co => estHex(co) ? co : PALETTE[co] || PALETTE[9];
+// Texte le plus lisible (blanc ou bleu nuit) sur une couleur de fond, d'après le contraste WCAG
+function texteSur(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.0584 ? "#ffffff" : "#0d1524";
+}
 const nomCouleur = co => estHex(co) ? co.toUpperCase() : NOMS_COULEURS[co] || "";
 function lireHex(v) {
   let s = String(v || "").trim().replace(/^#?/, "#");
@@ -525,7 +540,6 @@ function lancerEcran(code) {
     document.title = etat.titre === "Classement" ? "Classement" : etat.titre + " · Classement";
     h1.textContent = etat.titre;
     const tri = classer(etat.equipes);
-    const max = Math.max(1, ...tri.map(x => x.score));
     vide.hidden = tri.length > 0; liste.hidden = tri.length === 0;
     const ordre = tri.map(x => x.id).join();
     const animer = direct && !reduit && ordre !== dernierOrdre;
@@ -537,16 +551,16 @@ function lancerEcran(code) {
     for (const x of tri) {
       let l = lignes.get(x.id);
       if (!l) {
-        l = el("div", { class: "equipe" }, el("div", { class: "barre" }), el("div", { class: "rang" }), el("div", { class: "nom" }), el("div", { class: "score num" }));
+        l = el("div", { class: "equipe" }, el("div", { class: "rang" }), el("div", { class: "nom" }), el("div", { class: "score num" }));
         l._score = x.score; l.querySelector(".score").textContent = x.score;
         lignes.set(x.id, l);
       }
       l.style.setProperty("--c", couleur(x.co));
+      l.style.setProperty("--t", texteSur(couleur(x.co)));
       l.classList.toggle("tete", x.rang === 1 && x.score > 0);
       const [n, s] = ordinal(x.rang);
       l.querySelector(".rang").replaceChildren(n, el("sup", { text: s }));
       l.querySelector(".nom").textContent = x.nom;
-      l.querySelector(".barre").style.width = (x.score > 0 ? (x.score / max) * 100 : 0) + "%";
       if (l._score !== x.score) {
         if (direct) envol(l, x.score - l._score);
         animerScore(l.querySelector(".score"), l._score, x.score);
@@ -652,7 +666,7 @@ function lancerTele(code) {
       let c = cartes.get(x.id);
       if (!c) {
         const touche = (d, cls) => el("button", { class: cls, text: signe(d), "aria-label": `${signe(d)} point${Math.abs(d) > 1 ? "s" : ""}`, onclick: () => taper(x.id, d) });
-        c = el("article", { class: "carte" },
+        c = el("article", { class: "carte carte-equipe" },
           el("div", { class: "carte-haut" }, el("span", { class: "pastille" }),
             el("div", { style: "min-width:0" }, el("div", { class: "nom" }), el("div", { class: "rangc" })),
             el("div", { class: "score num" })),
@@ -662,6 +676,7 @@ function lancerTele(code) {
       }
       const t = tampon.get(x.id)?.d || 0;
       c.style.setProperty("--c", couleur(x.co));
+      c.style.setProperty("--t", texteSur(couleur(x.co)));
       $(".nom", c).textContent = x.nom;
       const [n, s] = ordinal(rangs.get(x.id));
       $(".rangc", c).textContent = `${n}${s} · ${nomCouleur(x.co)}`;
